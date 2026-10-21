@@ -14,22 +14,25 @@ public sealed record SettingsPage(string Id, string Title, int Order, string Gly
 /// </summary>
 public static class SettingsPages
 {
-    public static readonly SettingsPage General = new("general", "General", 0, "");
-    public static readonly SettingsPage Cursor = new("cursor", "Cursor and character", 10, "");
-    public static readonly SettingsPage Shortcuts = new("shortcuts", "Shortcuts", 20, "");
-    public static readonly SettingsPage Voice = new("voice", "Voice", 30, "");
-    public static readonly SettingsPage Claude = new("claude", "Claude", 40, "");
-    public static readonly SettingsPage Dictation = new("dictation", "Dictation and dictionary", 50, "");
-    public static readonly SettingsPage Memory = new("memory", "Memory", 60, "");
-    public static readonly SettingsPage Connectors = new("connectors", "Connectors", 70, "");
+    public static readonly SettingsPage General = new("general", "General", 0, "\uE713");
+    public static readonly SettingsPage Cursor = new("cursor", "Cursor and character", 10, "\uE7C9");
+    public static readonly SettingsPage Shortcuts = new("shortcuts", "Shortcuts", 20, "\uE765");
+    public static readonly SettingsPage Voice = new("voice", "Voice", 30, "\uE720");
+
+    /// <summary>Text mode and documents (M10).</summary>
+    public static readonly SettingsPage TextMode = new("text", "Typed questions and documents", 35, "\uE8D2");
+    public static readonly SettingsPage Claude = new("claude", "Claude", 40, "\uE8BD");
+    public static readonly SettingsPage Dictation = new("dictation", "Dictation and dictionary", 50, "\uE82D");
+    public static readonly SettingsPage Memory = new("memory", "Memory", 60, "\uE8F1");
+    public static readonly SettingsPage Connectors = new("connectors", "Connectors", 70, "\uE71B");
 
     /// <summary>Computer use (M13), Clickys (M14) and routines (M15).</summary>
-    public static readonly SettingsPage Agents = new("agents", "Agents", 80, "");
+    public static readonly SettingsPage Agents = new("agents", "Agents", 80, "\uE99A");
 
     /// <summary>Suggestions and announcements (M17).</summary>
-    public static readonly SettingsPage Suggestions = new("suggestions", "Suggestions", 90, "");
+    public static readonly SettingsPage Suggestions = new("suggestions", "Suggestions", 90, "\uE789");
 
-    public static readonly SettingsPage Updates = new("updates", "Updates and support", 100, "");
+    public static readonly SettingsPage Updates = new("updates", "Updates and support", 100, "\uE895");
 }
 
 /// <summary>One block on a settings page. A page shows its sections by <paramref name="Order"/>, top to bottom.</summary>

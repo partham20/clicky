@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Windows.Threading;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
+using Clicky.App.TextMode;
 using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
@@ -17,6 +18,7 @@ using Clicky.Core.Clickys;
 using Clicky.Core.Diagnostics;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
+using Clicky.Core.Documents;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
@@ -31,6 +33,7 @@ using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Dictation;
 using Clicky.Platform.Windows.Display;
+using Clicky.Platform.Windows.Documents;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
@@ -241,6 +244,7 @@ internal static class ServiceCollectionExtensions
         services.AddSettingsSection<HotkeysSettingsView>(SettingsPages.Shortcuts);
         services.AddSettingsSection<VoiceSettingsView>(SettingsPages.Voice);
         services.AddSettingsSection<SpeechSettingsView>(SettingsPages.Voice, order: 10);
+        services.AddSettingsSection<TextModeSettingsView>(SettingsPages.TextMode);
         services.AddSettingsSection<ClaudeSettingsView>(SettingsPages.Claude);
         services.AddSettingsSection<DictationSettingsView>(SettingsPages.Dictation);
         services.AddSettingsSection<MemorySettingsView>(SettingsPages.Memory);
@@ -256,6 +260,14 @@ internal static class ServiceCollectionExtensions
         services.AddTransient<PreviewPane>();
         services.AddTransient<HomeWindow>();
         services.AddSingleton<Func<HomeWindow>>(sp => sp.GetRequiredService<HomeWindow>);
+
+        // M10 text mode: the typed-question box, documents from files and from the app in front.
+        services.AddSingleton<WindowsDocumentReader>();
+        services.AddSingleton<IWindowDocumentReader>(sp => sp.GetRequiredService<WindowsDocumentReader>());
+        services.AddSingleton<IImageLoader, WicImageLoader>();
+        services.AddSingleton<TextModeController>();
+        services.AddSingleton<DropPad>();
+
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
         services.AddSingleton<TrayIconService>();

@@ -299,7 +299,7 @@ internal sealed class OnboardingWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var row = 0;
-        foreach (var action in new[] { HotkeyAction.Talk, HotkeyAction.Dictation, HotkeyAction.DictationHandsFree, HotkeyAction.OpenHome })
+        foreach (var action in new[] { HotkeyAction.Talk, HotkeyAction.TextMode, HotkeyAction.Dictation, HotkeyAction.DictationHandsFree, HotkeyAction.OpenHome })
         {
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var key = new TextBlock { Text = Gesture(action), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 3, 12, 3) };
