@@ -44,7 +44,11 @@ public sealed record HistoryLimits(int MaxTurns = 40, int TrimSlack = 10, int Ma
 /// except at an occasional trim (see <see cref="HistoryLimits"/>), which bumps <see cref="Generation"/>.
 /// Thread-safe.
 /// </summary>
-public sealed class Conversation(TimeProvider? time = null)
+/// <param name="memory">
+/// What Clicky remembers about the user (M11), fixed for the whole conversation so the prompt
+/// prefix never changes under the cache. Null for none.
+/// </param>
+public sealed class Conversation(TimeProvider? time = null, string? memory = null)
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly Lock _gate = new();
@@ -53,6 +57,8 @@ public sealed class Conversation(TimeProvider? time = null)
     public Guid Id { get; } = Guid.NewGuid();
 
     public DateTimeOffset StartedAt { get; } = (time ?? TimeProvider.System).GetUtcNow();
+
+    public string? Memory { get; } = string.IsNullOrWhiteSpace(memory) ? null : memory.Trim();
 
     /// <summary>Bumped whenever earlier history changes (a trim), so a backend that caches it can rebuild.</summary>
     public int Generation

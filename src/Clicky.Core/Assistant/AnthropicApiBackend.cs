@@ -148,6 +148,40 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         }
     }
 
+    public async Task<string> CompleteAsync(string system, string user, string model, CancellationToken cancellationToken = default)
+    {
+        var key = AnthropicKey.Read(secrets) ?? throw new ClaudeBackendException(ClaudeFailure.NotConfigured, "No Anthropic API key saved.");
+        var parameters = new MessageCreateParams
+        {
+            Model = model,
+            MaxTokens = MaxTokens,
+            Betas = [FallbackBeta],
+            Fallbacks = new Default(),
+            System = SystemBlocks(system, null),
+            OutputConfig = new BetaOutputConfig { Effort = Effort.Low },
+            Messages = [new BetaMessageParam { Role = Role.User, Content = new List<BetaContentBlockParam> { new BetaTextBlockParam { Text = user } } }],
+        };
+        try
+        {
+            var message = await Client(key).Beta.Messages.Create(parameters, cancellationToken).ConfigureAwait(false);
+            var text = new StringBuilder();
+            foreach (var block in message.Content)
+            {
+                if (block.TryPickText(out var part))
+                {
+                    text.Append(part.Text);
+                }
+            }
+
+            return text.ToString();
+        }
+        catch (Exception ex) when (Describe(ex, model) is { } failure)
+        {
+            logger.LogWarning(ex, "Claude API completion failed ({Failure})", failure.Failure);
+            throw failure;
+        }
+    }
+
     public void Dispose()
     {
         lock (_gate)
@@ -176,10 +210,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             MaxTokens = MaxTokens,
             Betas = [FallbackBeta, ThinkingBindingBeta],
             Fallbacks = new Default(),
-            System = new List<BetaTextBlockParam>
-            {
-                new() { Text = PromptLibrary.SystemPrompt(ActionDelivery.Tools), CacheControl = new BetaCacheControlEphemeral() },
-            },
+            System = SystemBlocks(PromptLibrary.SystemPrompt(ActionDelivery.Tools), conversation.Memory),
             Tools = s_tools.Value,
             ToolChoice = new BetaToolChoiceAuto(),
             Thinking = new BetaThinkingConfigAdaptive
@@ -192,6 +223,18 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             CacheControl = new BetaCacheControlEphemeral(),
             Messages = messages,
         };
+    }
+
+    /// <summary>The fixed prompt (cached across conversations), then this conversation's memory.</summary>
+    private static List<BetaTextBlockParam> SystemBlocks(string prompt, string? memory)
+    {
+        var blocks = new List<BetaTextBlockParam> { new() { Text = prompt, CacheControl = new BetaCacheControlEphemeral() } };
+        if (memory is not null)
+        {
+            blocks.Add(new BetaTextBlockParam { Text = memory });
+        }
+
+        return blocks;
     }
 
     private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, byte[]? png, string text)

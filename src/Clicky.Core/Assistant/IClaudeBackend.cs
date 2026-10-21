@@ -23,6 +23,13 @@ public interface IClaudeBackend
     /// <exception cref="ClaudeBackendException">Not set up, or the request failed.</exception>
     IAsyncEnumerable<ReplyEvent> ReplyAsync(Conversation conversation, ClaudeRequest request, string model, ClaudeEffort effort, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// One plain request, text in and text out: no tools, images or conversation (the memory
+    /// updater uses it). Independent of any reply in progress.
+    /// </summary>
+    /// <exception cref="ClaudeBackendException">Not set up, or the request failed.</exception>
+    Task<string> CompleteAsync(string system, string user, string model, CancellationToken cancellationToken = default);
+
     /// <summary>Whether this backend can answer right now (key stored, CLI installed…), for Settings. Never throws.</summary>
     Task<BackendCheck> CheckAsync(CancellationToken cancellationToken = default);
 }

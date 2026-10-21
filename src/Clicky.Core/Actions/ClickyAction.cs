@@ -25,29 +25,35 @@ public abstract record ClickyAction
 {
     /// <summary>The schema name of this action, e.g. "point".</summary>
     [JsonIgnore]
-    public abstract string Name { get; }
+    public string Name => this switch
+    {
+        SayAction => "say",
+        PointAction => "point",
+        HighlightAction => "highlight",
+        DrawAction => "draw",
+        StepAction => "step",
+        ClickAction => "click",
+        TypeAction => "type",
+        KeyAction => "key",
+        ScrollAction => "scroll",
+        WaitAction => "wait",
+        AskPermissionAction => "ask_permission",
+        DoneAction => "done",
+        _ => throw new InvalidOperationException($"Unknown action {GetType().Name}."),
+    };
 
     /// <summary>True for actions that change something on the computer and so need the permission gate.</summary>
     [JsonIgnore]
-    public virtual bool ControlsComputer => false;
+    public bool ControlsComputer => this is ClickAction or TypeAction or KeyAction or ScrollAction;
 }
 
-public sealed record SayAction(string Text) : ClickyAction
-{
-    public override string Name => "say";
-}
+public sealed record SayAction(string Text) : ClickyAction;
 
-public sealed record PointAction(double X, double Y, string? Label = null) : ClickyAction
-{
-    public override string Name => "point";
-}
+public sealed record PointAction(double X, double Y, string? Label = null) : ClickyAction;
 
 /// <param name="X">Left edge.</param>
 /// <param name="Y">Top edge.</param>
-public sealed record HighlightAction(double X, double Y, double Width, double Height, string? Label = null) : ClickyAction
-{
-    public override string Name => "highlight";
-}
+public sealed record HighlightAction(double X, double Y, double Width, double Height, string? Label = null) : ClickyAction;
 
 public sealed record DrawPoint(double X, double Y);
 
@@ -88,8 +94,6 @@ public enum DrawColor
 
 public sealed record DrawAction(DrawShape Shape, IReadOnlyList<DrawPoint> Points, double? Radius = null, DrawColor? Color = null, string? Label = null) : ClickyAction
 {
-    public override string Name => "draw";
-
     public bool Equals(DrawAction? other) =>
         other is not null && Shape == other.Shape && Radius == other.Radius && Color == other.Color && Label == other.Label
         && Points.SequenceEqual(other.Points);
@@ -98,10 +102,7 @@ public sealed record DrawAction(DrawShape Shape, IReadOnlyList<DrawPoint> Points
 }
 
 /// <param name="X">Where the user should act, if the step has a place on screen.</param>
-public sealed record StepAction(int Index, string Instruction, int? Total = null, double? X = null, double? Y = null) : ClickyAction
-{
-    public override string Name => "step";
-}
+public sealed record StepAction(int Index, string Instruction, int? Total = null, double? X = null, double? Y = null) : ClickyAction;
 
 [JsonConverter(typeof(JsonStringEnumConverter<MouseButton>))]
 public enum MouseButton
@@ -117,27 +118,12 @@ public enum MouseButton
 }
 
 /// <param name="Target">Name of the control, so UI Automation can invoke it without moving the pointer.</param>
-public sealed record ClickAction(double X, double Y, MouseButton Button = MouseButton.Left, int Count = 1, string? Target = null) : ClickyAction
-{
-    public override string Name => "click";
+public sealed record ClickAction(double X, double Y, MouseButton Button = MouseButton.Left, int Count = 1, string? Target = null) : ClickyAction;
 
-    public override bool ControlsComputer => true;
-}
-
-public sealed record TypeAction(string Text) : ClickyAction
-{
-    public override string Name => "type";
-
-    public override bool ControlsComputer => true;
-}
+public sealed record TypeAction(string Text) : ClickyAction;
 
 /// <param name="Keys">A key or chord as the model wrote it, e.g. "Ctrl+S".</param>
-public sealed record KeyAction(string Keys) : ClickyAction
-{
-    public override string Name => "key";
-
-    public override bool ControlsComputer => true;
-}
+public sealed record KeyAction(string Keys) : ClickyAction;
 
 [JsonConverter(typeof(JsonStringEnumConverter<ScrollDirection>))]
 public enum ScrollDirection
@@ -156,17 +142,9 @@ public enum ScrollDirection
 }
 
 /// <param name="Amount">Mouse-wheel notches.</param>
-public sealed record ScrollAction(double X, double Y, ScrollDirection Direction, int Amount = 3) : ClickyAction
-{
-    public override string Name => "scroll";
+public sealed record ScrollAction(double X, double Y, ScrollDirection Direction, int Amount = 3) : ClickyAction;
 
-    public override bool ControlsComputer => true;
-}
-
-public sealed record WaitAction(int Ms) : ClickyAction
-{
-    public override string Name => "wait";
-}
+public sealed record WaitAction(int Ms) : ClickyAction;
 
 [JsonConverter(typeof(JsonStringEnumConverter<ActionRisk>))]
 public enum ActionRisk
@@ -179,12 +157,6 @@ public enum ActionRisk
 }
 
 /// <param name="Action">What the model is about to do, in the user's terms.</param>
-public sealed record AskPermissionAction(string Action, string? Reason = null, ActionRisk Risk = ActionRisk.Normal) : ClickyAction
-{
-    public override string Name => "ask_permission";
-}
+public sealed record AskPermissionAction(string Action, string? Reason = null, ActionRisk Risk = ActionRisk.Normal) : ClickyAction;
 
-public sealed record DoneAction(string? Summary = null, bool Success = true) : ClickyAction
-{
-    public override string Name => "done";
-}
+public sealed record DoneAction(string? Summary = null, bool Success = true) : ClickyAction;

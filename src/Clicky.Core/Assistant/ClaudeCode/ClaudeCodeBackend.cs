@@ -215,6 +215,68 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         }
     }
 
+    public async Task<string> CompleteAsync(string system, string user, string model, CancellationToken cancellationToken = default)
+    {
+        // A one-off process of its own, so it never waits behind (or disturbs) a spoken reply.
+        var executable = ClaudeCliLocator.Find(_settings.Current.Claude.CliPath)
+            ?? throw new ClaudeBackendException(ClaudeFailure.NotConfigured, NotInstalledMessage());
+        Directory.CreateDirectory(_directory);
+        var arguments = Arguments(model, string.Empty).ToList();
+        var promptAt = arguments.IndexOf("--system-prompt-file");
+        arguments[promptAt] = "--system-prompt";
+        arguments[promptAt + 1] = system;
+        arguments.Remove("--include-partial-messages");
+
+        IClaudeCliProcess process;
+        try
+        {
+            process = _start(new ClaudeCliStartInfo(executable, arguments, _directory, s_removeEnvironment));
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            throw new ClaudeBackendException(ClaudeFailure.NotConfigured, $"Could not start Claude Code ({executable}): {ex.Message}", ex);
+        }
+
+        using var session = new ClaudeCliSession(process, Guid.Empty, 0, model);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(2));
+        try
+        {
+            await session.SendUserAsync([new JsonObject { ["type"] = "text", ["text"] = user }], timeout.Token).ConfigureAwait(false);
+            string? synthetic = null;
+            while (true)
+            {
+                var next = await session.ReadAsync(timeout.Token).ConfigureAwait(false);
+                if (!next.Ok)
+                {
+                    throw new ClaudeBackendException(ClaudeFailure.Failed, $"Claude Code stopped unexpectedly. {LastLine(session.ErrorTail)}".Trim());
+                }
+
+                var message = next.Message;
+                var type = message.TryGetProperty("type", out var t) ? t.GetString() : null;
+                if (type == "assistant" && message.TryGetProperty("message", out var assistant)
+                    && assistant.TryGetProperty("model", out var m) && m.GetString() == "<synthetic>")
+                {
+                    synthetic = assistant.GetProperty("content").EnumerateArray().Select(b => b.TryGetProperty("text", out var x) ? x.GetString() : null).FirstOrDefault(x => x is not null);
+                }
+                else if (type == "result")
+                {
+                    var text = message.TryGetProperty("result", out var r) ? r.GetString() ?? string.Empty : string.Empty;
+                    if (message.TryGetProperty("is_error", out var e) && e.ValueKind == JsonValueKind.True)
+                    {
+                        throw TurnState.Classify(synthetic ?? text);
+                    }
+
+                    return text;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ClaudeBackendException(ClaudeFailure.Timeout, "Claude Code took too long to answer.");
+        }
+    }
+
     public void Dispose()
     {
         _idle.Dispose();
@@ -268,6 +330,13 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
     {
         var content = new JsonArray();
         var turns = conversation.Turns;
+
+        // The system prompt is fixed when Claude Code starts, so memory rides on its first message.
+        if (session.TurnsSeen == 0 && conversation.Memory is { } memory)
+        {
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = memory });
+        }
+
         if (session.TurnsSeen < turns.Count)
         {
             content.Add(new JsonObject { ["type"] = "text", ["text"] = Transcript(turns) });
