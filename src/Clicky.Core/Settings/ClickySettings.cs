@@ -44,6 +44,8 @@ public sealed record ClickySettings
 
     public RoutineSettings Routines { get; init; } = new();
 
+    public TextModeSettings Text { get; init; } = new();
+
     public InkSettings Ink { get; init; } = new();
 
     public DebugSettings Debug { get; init; } = new();
@@ -67,6 +69,7 @@ public sealed record ClickySettings
         Connectors = (Connectors ?? new()).Normalize(),
         Dictation = (Dictation ?? new()).Normalize(),
         Routines = (Routines ?? new()).Normalize(),
+        Text = (Text ?? new()).Normalize(),
         Ink = Ink ?? new(),
         Debug = Debug ?? new(),
     };

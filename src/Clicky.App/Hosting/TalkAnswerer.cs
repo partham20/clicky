@@ -18,19 +18,34 @@ internal sealed class TalkAnswerer(TalkLoop talk, ReplyPresenter replies, IBuddy
     /// <summary>Longest question shown as the thinking caption.</summary>
     private const int QuestionCaptionChars = 120;
 
-    public async Task<TalkResult> AskAsync(TalkQuestion question, CancellationToken cancellationToken = default)
+    public Task<TalkResult> AskAsync(TalkQuestion question, CancellationToken cancellationToken = default) =>
+        AskAsync(question, null, cancellationToken);
+
+    /// <summary>
+    /// The same, with the answer's words going to <paramref name="beginReply"/> instead of the
+    /// speaker (text mode shows them in its box). The buddy goes back to idle when it is done.
+    /// </summary>
+    public async Task<TalkResult> AskAsync(TalkQuestion question, Func<ITalkReply>? beginReply, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(question);
         var caption = QuestionCaption(question.Text);
         presence.SetState(BuddyState.Thinking);
         presence.SetCaption(caption);
 
-        var result = await talk.AnswerAsync(question, replies.Begin, cancellationToken).ConfigureAwait(false);
+        var result = await talk.AnswerAsync(question, beginReply ?? replies.Begin, cancellationToken).ConfigureAwait(false);
 
         // Spoken sentences replace the question caption as they start; clear it if none did.
         ClearCaptionIf(caption);
         switch (result.Outcome)
         {
+            case TalkOutcome.Answered when beginReply is not null:
+                if (presence.State == BuddyState.Thinking)
+                {
+                    presence.SetState(BuddyState.Idle);
+                }
+
+                break;
+
             case TalkOutcome.Answered when result.SpokenText.Length == 0:
                 if (presence.State == BuddyState.Thinking)
                 {
