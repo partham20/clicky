@@ -31,6 +31,8 @@ public sealed record ClickySettings
 
     public VoiceSettings Voice { get; init; } = new();
 
+    public SpeechSettings Speech { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -45,6 +47,7 @@ public sealed record ClickySettings
         Hotkeys = (Hotkeys ?? new()).Normalize(),
         Capture = (Capture ?? new()).Normalize(),
         Voice = (Voice ?? new()).Normalize(),
+        Speech = (Speech ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }
