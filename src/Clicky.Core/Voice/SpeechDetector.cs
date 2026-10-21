@@ -36,7 +36,7 @@ public static class SpeechDetector
     public const double DigitalSilenceDb = -100;
 
     /// <summary>Frames quieter than this are never speech.</summary>
-    public const double AbsoluteFloorDb = -50;
+    public const double AbsoluteFloorDb = -60;
 
     /// <summary>
     /// Frames louder than this always are. Without a cap, a recording that is speech from end to

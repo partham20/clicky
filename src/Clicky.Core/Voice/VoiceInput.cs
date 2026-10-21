@@ -98,6 +98,7 @@ public sealed class VoiceSession : IDisposable
         _settings = settings;
         _startedAt = owner.Time.GetTimestamp();
         var voice = settings.Voice;
+        owner.Engines(voice.Engine).Prepare();
         var maxDuration = TimeSpan.FromSeconds(voice.MaxRecordingSeconds);
         _recording = Task.Run(
             () => owner.Microphone.StartAsync(

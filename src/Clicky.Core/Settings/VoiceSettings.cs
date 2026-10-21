@@ -18,7 +18,7 @@ public sealed record VoiceSettings(
     public const string DefaultLanguage = "en";
     public const string AutoLanguage = "auto";
     public const string DefaultCloudModel = "gpt-4o-mini-transcribe";
-    public const int DefaultMinSpeechMs = 300;
+    public const int DefaultMinSpeechMs = 200;
     public const int MaxMinSpeechMs = 3000;
     public const int DefaultMaxRecordingSeconds = 120;
     public const int MinMaxRecordingSeconds = 5;

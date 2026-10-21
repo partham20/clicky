@@ -35,6 +35,12 @@ public interface ISpeechToText
     /// is no slower than the rest. Safe to call more than once; never throws.
     /// </summary>
     Task WarmUpAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A request is coming soon (the user just started talking): wake anything that is slow to
+    /// wake, such as a GPU that has clocked down. Returns at once; never throws.
+    /// </summary>
+    void Prepare();
 }
 
 public sealed class SpeechToTextException : Exception
