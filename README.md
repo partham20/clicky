@@ -7,7 +7,7 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, and later the agent loop. No Windows APIs |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, Clickys (SQLite), and later the agent loop. No Windows APIs |
 | `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
@@ -40,6 +40,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
 - `dictation`: `maxMinutes` (30), `typeWhileSpeaking` (true, hands-free), `spokenCommands` (true), `learnCorrections` (true), `keepHistoryDays` (30), `cleanup` (`Auto`, `Always`, `Off`), `terminalApps`, `pasteApps`. Also in Settings › Dictation. `dictionary.json` is the personal dictionary and `dictation\` the transcript history (see Dictation below).
+- `clickys.db` (SQLite) holds your Clickys, their chats, runs and activity; `clickys\<id>\` is each Clicky's files folder (see Clickys and Home below). WebView2's cache for Home's preview is in `%LocalAppData%\Clicky\webview2`.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
 ## Behaviour notes
@@ -171,3 +172,18 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 - **Terminals.** Windows Terminal, the console, mintty, PuTTY, Alacritty, WezTerm, ConEmu, Tabby, Hyper and xterm.js terminals (VS Code's) get every line break turned into a space, so dictation can never run a command. `dictation.terminalApps` adds more by exe name. Terminal pastes use Shift+Insert.
 - **Can't type there.** Administrator windows refuse input from a normal process (UIPI), so the text goes on the clipboard and the buddy says to press Ctrl+V. With nothing focused (desktop, taskbar), or when a hold is interrupted by another key, the text shows in a card with a Copy button instead of being typed into the wrong place. It is in the history either way.
 - **Timing** on the i7-13800H / RTX A1000: a sentence chunk takes 0.9 s on the GPU once warm, so in hands-free mode text appears about 1.5 s after you pause, and release-to-text after a hold is under 1 s however long you spoke.
+
+## Clickys and Home (M14)
+
+Home (Ctrl+Alt+A, the tray menu, or launching Clicky again) has the docked buddy and your Clickys on the left, the selected Clicky's chat in the middle, and Preview, Activity and History on the right.
+
+- A Clicky is a persistent helper: a name, a colour, instructions sent with every task, notes it keeps in mind, and a files folder (`Files`, or drop files on the chat). Small text files in the folder (16 KB each, 48 KB in all) go with every task; the rest are listed by name. Templates in New Clicky give a starting point.
+- Writing in its chat starts a run. Each run gets the Clicky's instructions, notes, files, what Clicky remembers about you (M11) and the last 20 exchanges of its chat, and goes to the deep model on the active backend. Replies are written to be read, in Markdown, not spoken. One run per Clicky at a time (later ones queue), and only one run at a time may use the computer.
+- Runs can be paused (they hold at the next step boundary), resumed and stopped from the bar above the composer. A stopped run keeps what it said so far. A run cut off by quitting Clicky shows as Interrupted; History's `Ask again` reruns any finished task.
+- A reply lands in the chat as unread (badge in the list) and, if you're not looking at that Clicky, as a Windows notification. Nothing is spoken.
+- Preview renders the selected reply's Markdown in WebView2, or the HTML document it contains (a reply with an ```` ```html ```` block). Previews run with scripts off, a Content-Security-Policy, and every network request refused; links open in your browser. Without the WebView2 Runtime the preview falls back to plain text. `Save to files` writes the reply (`.md`, or `.html` for a document) into the Clicky's folder.
+- Activity is the run's step log (requests, what it said, actions, refusals, pauses); History lists runs with status, trigger, duration, steps, tokens and cost.
+- `Can see the screen and use the computer` lets a Clicky's runs take a screenshot and act through the computer-use agent (M13). Unattended runs never get a countdown or card: actions needing permission are refused unless a permission prompter is wired in. Until M13 is wired, every Clicky chats and uses connectors only.
+- Schema changes run as numbered migrations (`PRAGMA user_version`); an existing database is copied to `clickys.db.v<N>.bak` before an upgrade, a damaged one is moved to `clickys.db.corrupt-<time>` and a fresh one started, and one written by a newer Clicky is left untouched with an error in Home.
+- For code: `ClickyService` (in `Clicky.Core.Clickys`) is the API. `CreateAsync`, `UpdateAsync`, `DeleteAsync`, `ListAsync`; `SendAsync(clickyId, text)` for chat; `RunAsync(clickyId, ClickyRunRequest, ct)` runs a task and waits for its `ClickyRunOutcome` (routines use this; it throws `ClaudeBackendException` on backend failure); `Pause`, `Resume`, `Cancel`, `RetryAsync`; `Changed` and `RunFinished` events. Computer use plugs in as an `IClickyActor`.
+
