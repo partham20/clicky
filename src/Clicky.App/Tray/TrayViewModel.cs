@@ -2,6 +2,7 @@ using System.Windows.Threading;
 using Clicky.App.Hosting;
 using Clicky.Core.Buddy;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Clicky.Core.Updates;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -14,6 +15,7 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
     private readonly ISettingsStore _settings;
     private readonly IAppShell _shell;
     private readonly IBuddyPresence _presence;
+    private readonly TalkLoop _talk;
     private readonly UpdateService _updates;
     private readonly Dispatcher _dispatcher;
     private readonly ILogger<TrayViewModel> _logger;
@@ -25,6 +27,7 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
         ISettingsStore settings,
         IAppShell shell,
         IBuddyPresence presence,
+        TalkLoop talk,
         UpdateService updates,
         Dispatcher dispatcher,
         ILogger<TrayViewModel> logger)
@@ -32,6 +35,7 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
         _settings = settings;
         _shell = shell;
         _presence = presence;
+        _talk = talk;
         _updates = updates;
         _dispatcher = dispatcher;
         _logger = logger;
@@ -75,13 +79,21 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void Quit() => _shell.Quit();
 
+    /// <summary>Forgets the conversation so far (memory gets its pass over it); the next question starts fresh.</summary>
+    [RelayCommand]
+    private void NewConversation()
+    {
+        _logger.LogInformation("Tray: new conversation");
+        _talk.NewConversation();
+    }
+
     [RelayCommand]
     private void Update() => _shell.RestartToUpdate();
 
     [RelayCommand]
     private void ReportBug() => _shell.ShowBugReport();
 
-    // Preview only: lets the states be checked before voice exists. M6 drives them for real.
+    // Preview only: lets each state be checked by eye. Talk drives them for real.
     [RelayCommand]
     private void SetBuddyState(BuddyState state) => _presence.SetState(state);
 

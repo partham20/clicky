@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Windows.Threading;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
+using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
@@ -14,9 +15,11 @@ using Clicky.Core.Diagnostics;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Clicky.Core.Updates;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
@@ -105,6 +108,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnthropicApiBackend>();
         services.AddSingleton<ClaudeCodeBackend>();
         services.AddSingleton<ClaudeAssistant>();
+        services.AddSingleton<IClaudeAssistant>(sp => sp.GetRequiredService<ClaudeAssistant>());
 
         // Memory updates run on the active backend's fast model.
         services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
@@ -154,6 +158,22 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnnotationRenderer>();
         services.AddSingleton<IAnnotationRenderer>(sp => sp.GetRequiredService<AnnotationRenderer>());
         services.AddSingleton<AnnotationDemo>();
+
+        // M9 ink trail: the talk loop records the pointer during Talk and attaches it to the request.
+        services.AddSingleton<InkTrailService>();
+        services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
+        services.AddSingleton<InkTrailDemo>();
+
+        // M6 Talk: the computer-use agent (M13) is optional; TalkLoop hands over to it when registered.
+        services.AddSingleton(sp => new TalkLoop(
+            sp.GetRequiredService<IClaudeAssistant>(),
+            sp.GetRequiredService<IMemoryService>(),
+            sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<IInkTrailService>(),
+            sp.GetRequiredService<ILogger<TalkLoop>>(),
+            sp.GetService<IComputerAgent>()));
+        services.AddSingleton<TalkAnswerer>();
+        services.AddSingleton<HiddenBuddyCaption>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();
