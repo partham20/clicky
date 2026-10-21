@@ -55,9 +55,24 @@ function Installed-Version {
 
 function Run-Entry { (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).Clicky }
 
+function Show-Clicky {
+    Get-CimInstance Win32_Process -Filter "Name = 'Clicky.exe' OR Name = 'Update.exe'" |
+        Format-Table ProcessId, ParentProcessId, CreationDate, CommandLine -AutoSize -Wrap | Out-String | Write-Host
+}
+
+# Kills on every pass: right after an update Velopack's updater starts the new version once more.
 function Stop-Clicky {
-    Get-Process Clicky -ErrorAction SilentlyContinue | Stop-Process -Force
-    Wait-Until { -not (Get-Process Clicky -ErrorAction SilentlyContinue) } 30 'Clicky stopped'
+    try {
+        Wait-Until {
+            Get-Process Clicky -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            -not (Get-Process Clicky -ErrorAction SilentlyContinue)
+        } 30 'Clicky stopped'
+    }
+    catch {
+        Show-Clicky
+        throw
+    }
 }
 
 function Start-Clicky { Start-Process -FilePath $stub -WorkingDirectory $installRoot | Out-Null }
@@ -113,6 +128,7 @@ Wait-Until { Select-String -Path (Join-Path $data 'logs\*') -Pattern 'Clicky 0\.
 Assert ((Run-Entry) -eq $expectedRun) 'Run entry still points at the stub after the update'
 
 Step 'Uninstall silently'
+Show-Clicky
 Stop-Clicky
 $entry = Get-ItemProperty $uninstallKey
 $command = if ($entry.QuietUninstallString) { $entry.QuietUninstallString } else { "$($entry.UninstallString) --silent" }

@@ -3,7 +3,7 @@
   Publishes Clicky (self-contained, win-x64) and packs it with Velopack.
 
 .DESCRIPTION
-  Output goes to -OutputDir (default artifacts\releases): Clicky-win-Setup.exe, the full and delta
+  Output goes to -OutputDir (default artifacts\releases): ClickyApp-win-Setup.exe, the full and delta
   .nupkg files, releases.win.json and a portable zip. Put earlier releases in -OutputDir first
   (vpk download) to get delta packages. Used by .github/workflows/release.yml and for local tests.
 
