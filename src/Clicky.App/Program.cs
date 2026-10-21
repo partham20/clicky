@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Clicky.App.Buddy;
 using Clicky.App.Hosting;
+using Clicky.App.TextMode;
 using Clicky.App.Tray;
 using Clicky.Core;
 using Clicky.Platform.Windows;
@@ -80,14 +81,17 @@ public static class Program
             var tray = host.Services.GetRequiredService<TrayIconService>();
             var buddy = host.Services.GetRequiredService<FloatingBuddy>();
             var hiddenBuddyCaption = host.Services.GetRequiredService<HiddenBuddyCaption>();
+            var dropPad = host.Services.GetRequiredService<DropPad>();
             app.Startup += (_, _) =>
             {
                 tray.Show();
                 buddy.Start();
                 hiddenBuddyCaption.Start();
+                dropPad.Start();
             };
             app.Exit += (_, _) =>
             {
+                dropPad.Dispose();
                 hiddenBuddyCaption.Dispose();
                 buddy.Dispose();
                 host.Services.GetRequiredService<OverlayHost>().Dispose();

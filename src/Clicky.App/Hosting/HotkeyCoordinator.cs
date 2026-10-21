@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using Clicky.App.TextMode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
@@ -19,8 +20,8 @@ namespace Clicky.App.Hosting;
 /// stops Clicky if it is speaking or still answering (barge-in), clears its marks and gets Claude
 /// ready; it shows the buddy listening and takes a screenshot once it arms, and on release turns
 /// the speech into text and asks Claude with the screenshot (<see cref="TalkAnswerer"/>). OpenHome
-/// opens Home. The rest are logged until their milestones (text mode M10). Dictation is
-/// DictationCoordinator's.
+/// opens Home. TextMode opens the typed-question box (<see cref="TextModeController"/>). The rest
+/// are logged until their milestones. Dictation is DictationCoordinator's.
 /// </summary>
 /// <remarks>Events arrive on the hotkey pump thread, one at a time; nothing here blocks it or the UI thread.</remarks>
 internal sealed class HotkeyCoordinator(
@@ -31,6 +32,7 @@ internal sealed class HotkeyCoordinator(
     TalkLoop talkLoop,
     IInkTrailService ink,
     TalkAnswerer answerer,
+    TextModeController textMode,
     IBuddyPresence presence,
     ISettingsStore settings,
     IAppShell shell,
@@ -141,6 +143,10 @@ internal sealed class HotkeyCoordinator(
 
             case (HotkeyAction.OpenHome, HotkeyPhase.Fired):
                 dispatcher.InvokeAsync(shell.ShowHome);
+                break;
+
+            case (HotkeyAction.TextMode, HotkeyPhase.Fired):
+                textMode.Toggle();
                 break;
 
             case (HotkeyAction.Dictation or HotkeyAction.DictationHandsFree, _):
