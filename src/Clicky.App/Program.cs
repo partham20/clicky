@@ -1,9 +1,11 @@
 using System.Windows;
 using System.Windows.Threading;
+using Clicky.App.Buddy;
 using Clicky.App.Hosting;
 using Clicky.App.Tray;
 using Clicky.Core;
 using Clicky.Platform.Windows;
+using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.SingleInstance;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -67,8 +69,18 @@ public static class Program
             lifetime.ApplicationStopping.Register(() => app.Dispatcher.InvokeAsync(app.Shutdown));
 
             var tray = host.Services.GetRequiredService<TrayIconService>();
-            app.Startup += (_, _) => tray.Show();
-            app.Exit += (_, _) => tray.Dispose();
+            var buddy = host.Services.GetRequiredService<FloatingBuddy>();
+            app.Startup += (_, _) =>
+            {
+                tray.Show();
+                buddy.Start();
+            };
+            app.Exit += (_, _) =>
+            {
+                buddy.Dispose();
+                host.Services.GetRequiredService<OverlayHost>().Dispose();
+                tray.Dispose();
+            };
 
             var exitCode = app.Run();
 

@@ -13,14 +13,16 @@
   <Grid Margin="24">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
     <TextBlock x:Name="Heading" FontSize="20" FontWeight="SemiBold" />
     <TextBlock x:Name="Body" Grid.Row="1" Margin="0,12,0,0" TextWrapping="Wrap" />
+    <ContentPresenter x:Name="Extra" Grid.Row="2" Margin="0,16,0,0" />
     <Button
         x:Name="ActionButton"
-        Grid.Row="2"
+        Grid.Row="3"
         MinWidth="140"
         Padding="12,4"
         HorizontalAlignment="Left"

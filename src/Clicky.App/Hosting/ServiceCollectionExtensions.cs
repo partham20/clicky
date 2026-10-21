@@ -1,7 +1,10 @@
 using System.Windows.Threading;
+using Clicky.App.Buddy;
 using Clicky.App.Tray;
 using Clicky.Core;
+using Clicky.Core.Buddy;
 using Clicky.Core.Settings;
+using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Startup;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,6 +42,15 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton(_ => new StartupRegistration(
             "Clicky",
             Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine the executable path.")));
+
+        services.AddSingleton<IBuddyPresence, BuddyPresence>();
+        services.AddSingleton<IBuddySkin, PointerBuddySkin>();
+
+        // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
+        services.AddSingleton<OverlayHost>();
+        services.AddSingleton<FloatingBuddy>();
+        services.AddTransient<DockedBuddyView>();
+        services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
