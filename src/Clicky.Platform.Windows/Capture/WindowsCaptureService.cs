@@ -131,8 +131,9 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
             await EncodePngAsync(new byte[16 * 16 * 4], 16, 16, 8, 8).ConfigureAwait(false);
             _logger.LogInformation("Capture path warmed up in {Ms:0} ms", stopwatch.Elapsed.TotalMilliseconds);
         }
-        catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException)
+        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
         {
+            // Never fatal: the first capture creates whatever is missing, and Talk works without a screenshot.
             _logger.LogWarning(ex, "Capture warm-up failed; the first capture will be slower");
         }
         finally
@@ -279,7 +280,13 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
 
     private IDirect3DDevice CreateDevice()
     {
-        var device = CaptureInterop.CreateDevice(out var description);
+        IDirect3DDevice device;
+        string description;
+        using (GpuInitGate.Enter())
+        {
+            device = CaptureInterop.CreateDevice(out description);
+        }
+
         _logger.LogInformation("Capture device ready ({Device}, {Format})", description, PixelFormat);
         return device;
     }

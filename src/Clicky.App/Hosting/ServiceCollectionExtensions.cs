@@ -18,6 +18,7 @@ using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
@@ -105,6 +106,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnthropicApiBackend>();
         services.AddSingleton<ClaudeCodeBackend>();
         services.AddSingleton<ClaudeAssistant>();
+        services.AddSingleton<IClaudeAssistant>(sp => sp.GetRequiredService<ClaudeAssistant>());
 
         // Memory updates run on the active backend's fast model.
         services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
@@ -153,6 +155,16 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<InkTrailService>();
         services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
         services.AddSingleton<InkTrailDemo>();
+
+        // M6 Talk: the computer-use agent (M13) is optional; TalkLoop hands over to it when registered.
+        services.AddSingleton(sp => new TalkLoop(
+            sp.GetRequiredService<IClaudeAssistant>(),
+            sp.GetRequiredService<IMemoryService>(),
+            sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<ILogger<TalkLoop>>(),
+            sp.GetService<IComputerAgent>()));
+        services.AddSingleton<TalkAnswerer>();
+        services.AddSingleton<HiddenBuddyCaption>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();

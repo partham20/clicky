@@ -1,3 +1,5 @@
+using System.Windows.Threading;
+using Clicky.Core.Capture;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Speech;
@@ -12,7 +14,14 @@ namespace Clicky.App.Hosting;
 /// download so a first Talk that says "still downloading" is no surprise. Loads the reply voice
 /// too, at startup and when settings.speech changes engine or voice.
 /// </summary>
+/// <remarks>
+/// The screen-capture path (a D3D11 device) warms up here too, first and on its own: on Optimus
+/// laptops creating it while Whisper brought up Vulkan crashed about one start in six. So startup
+/// waits for the UI to settle, warms capture, and only then speech-to-text (see GpuInitGate).
+/// </remarks>
 internal sealed class VoiceStartup(
+    ICaptureService capture,
+    Dispatcher dispatcher,
     VoiceInput voice,
     VoiceOutput speech,
     WhisperSpeechToText whisper,
@@ -21,6 +30,9 @@ internal sealed class VoiceStartup(
     IUserNotifier notifier,
     ILogger<VoiceStartup> logger) : IHostedService, IDisposable
 {
+    /// <summary>After the UI goes idle, room for WPF's render thread to create its own device.</summary>
+    private static readonly TimeSpan UiSettle = TimeSpan.FromMilliseconds(500);
+
     private readonly CancellationTokenSource _stopping = new();
     private int _warming;
     private WhisperModel? _downloading;
@@ -29,9 +41,9 @@ internal sealed class VoiceStartup(
     {
         whisper.DownloadProgressChanged += OnDownloadProgress;
         settings.Changed += OnSettingsChanged;
-        WarmUp();
+        _ = Task.Run(WarmUpGpuUsersAsync, CancellationToken.None);
 
-        // Alongside, not after: a first-run model download can take minutes.
+        // Alongside, not after: a first-run model download can take minutes. No GPU involved.
         logger.LogInformation("Reply voice: {Engine}", settings.Current.Speech.Engine);
         _ = Task.Run(() => speech.WarmUpAsync(_stopping.Token), CancellationToken.None);
         return Task.CompletedTask;
@@ -53,7 +65,7 @@ internal sealed class VoiceStartup(
     {
         if (AffectsEngine(e.Previous.Voice, e.Current.Voice))
         {
-            WarmUp();
+            _ = WarmUp();
         }
 
         var (before, after) = (e.Previous.Speech, e.Current.Speech);
@@ -63,15 +75,38 @@ internal sealed class VoiceStartup(
         }
     }
 
-    private void WarmUp()
+    private async Task WarmUpGpuUsersAsync()
+    {
+        try
+        {
+            // Not from StartAsync itself: the UI thread is blocked until the host has started.
+            await dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle).Task.WaitAsync(_stopping.Token).ConfigureAwait(false);
+            await Task.Delay(UiSettle, _stopping.Token).ConfigureAwait(false);
+
+            // Device creation and codec loading cost ~1 s once; pay it now rather than on the first Talk.
+            await capture.WarmUpAsync(_stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            logger.LogWarning(ex, "Capture warm-up failed; the first capture will be slower");
+        }
+
+        await WarmUp().ConfigureAwait(false);
+    }
+
+    private Task WarmUp()
     {
         // One at a time; a change during a warm-up is picked up by the next Talk anyway.
         if (Interlocked.Exchange(ref _warming, 1) != 0)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        _ = Task.Run(
+        return Task.Run(
             async () =>
             {
                 try

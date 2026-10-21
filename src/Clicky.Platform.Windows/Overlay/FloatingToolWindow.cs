@@ -13,11 +13,17 @@ namespace Clicky.Platform.Windows.Overlay;
 public static class FloatingToolWindow
 {
     /// <summary>Call from the window's SourceInitialized.</summary>
-    public static void Apply(nint hwnd, ILogger logger)
+    /// <param name="clickThrough">Mouse input passes through to the window below (captions that are only read).</param>
+    public static void Apply(nint hwnd, ILogger logger, bool clickThrough = false)
     {
         ArgumentNullException.ThrowIfNull(logger);
-        var exStyle = GetWindowLongPtr(hwnd, GwlExStyle);
-        SetWindowLongPtr(hwnd, GwlExStyle, exStyle | WsExToolWindow | WsExNoActivate);
+        var exStyle = GetWindowLongPtr(hwnd, GwlExStyle) | WsExToolWindow | WsExNoActivate;
+        if (clickThrough)
+        {
+            exStyle |= WsExTransparent | WsExLayered;
+        }
+
+        SetWindowLongPtr(hwnd, GwlExStyle, exStyle);
         if (!SetWindowDisplayAffinity(hwnd, WdaExcludeFromCapture))
         {
             logger.LogDebug("Could not exclude a floating window from capture (error {Error})", Marshal.GetLastPInvokeError());
