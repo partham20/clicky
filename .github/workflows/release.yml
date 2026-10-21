@@ -72,5 +72,7 @@ jobs:
           name: clicky-${{ env.VERSION }}
           path: |
             artifacts/releases/*Setup.exe
+            artifacts/releases/*Portable.zip
             artifacts/releases/*.nupkg
-            artifacts/releases/releases.win.json
+            artifacts/releases/*.json
+            artifacts/releases/RELEASES
