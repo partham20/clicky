@@ -13,6 +13,29 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # The local voice test synthesizes with the real Kokoro model, so the native sherpa-onnx and
+      # ONNX Runtime DLLs are loaded on Windows, not only on Linux dev boxes.
+      - name: Cache Kokoro voice model
+        id: kokoro
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/voices/kokoro-multi-lang-v1_0
+          key: kokoro-multi-lang-v1_0-c5f7e2d2
+      - name: Fetch Kokoro voice model
+        if: steps.kokoro.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'voices'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $archive = Join-Path $dir 'kokoro.tar.bz2'
+          Invoke-WebRequest https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2 -OutFile $archive
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298') { throw "Kokoro archive hash $hash" }
+          tar -xjf $archive -C $dir
+          Remove-Item $archive
+      - name: Point the tests at the model
+        shell: pwsh
+        run: '"CLICKY_TEST_VOICE_MODEL=$(Join-Path $env:RUNNER_TEMP voices/kokoro-multi-lang-v1_0)" >> $env:GITHUB_ENV'
       - run: dotnet restore Clicky.sln
       - run: dotnet build Clicky.sln -c Release --no-restore
       - run: dotnet test Clicky.sln -c Release --no-build --logger "trx;LogFileName=results.trx"

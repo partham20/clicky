@@ -10,6 +10,10 @@ public sealed record SpeechSettings(
     string WindowsVoice = "",
     string CloudModel = SpeechSettings.DefaultCloudModel,
     string CloudVoice = SpeechSettings.DefaultCloudVoice,
+    string LocalVoice = LocalVoiceModels.DefaultVoice,
+    string LocalModel = LocalVoiceModels.DefaultModel,
+    string LocalModelPath = "",
+    int LocalThreads = 0,
     double Rate = 1.0,
     double Volume = 1.0,
     string OutputDevice = "",
@@ -20,6 +24,7 @@ public sealed record SpeechSettings(
 {
     public const string DefaultCloudModel = "gpt-4o-mini-tts";
     public const string DefaultCloudVoice = "coral";
+    public const int MaxLocalThreads = 16;
     public const double MinRate = 0.5;
     public const double MaxRate = 2.0;
 
@@ -36,6 +41,21 @@ public sealed record SpeechSettings(
 
     /// <summary>OpenAI voice name: alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse.</summary>
     public string CloudVoice { get; init; } = CloudVoice;
+
+    /// <summary>Voice of the local model, e.g. "af_heart" (Kokoro) or a speaker number; empty for the model's default.</summary>
+    public string LocalVoice { get; init; } = LocalVoice;
+
+    /// <summary>Which downloadable local model to use (see <see cref="LocalVoiceModels"/>); ignored when <see cref="LocalModelPath"/> is set.</summary>
+    public string LocalModel { get; init; } = LocalModel;
+
+    /// <summary>
+    /// A folder with a sherpa-onnx text-to-speech model (Kokoro or Piper/VITS) to use instead of a
+    /// downloaded one, e.g. a Piper voice unpacked by hand. Empty downloads <see cref="LocalModel"/>.
+    /// </summary>
+    public string LocalModelPath { get; init; } = LocalModelPath;
+
+    /// <summary>CPU threads for the local voice; 0 picks half the logical cores, at most 4.</summary>
+    public int LocalThreads { get; init; } = LocalThreads;
 
     /// <summary>Speaking speed, 1 is normal; clamped to <see cref="MinRate"/>..<see cref="MaxRate"/>.</summary>
     public double Rate { get; init; } = Rate;
@@ -62,12 +82,24 @@ public sealed record SpeechSettings(
     /// </summary>
     public IReadOnlyList<string> IgnoreMicApps { get; init; } = IgnoreMicApps ?? [];
 
+    /// <summary>The voice setting that goes with <paramref name="engine"/>.</summary>
+    public string VoiceFor(VoiceOutputEngine engine) => engine switch
+    {
+        VoiceOutputEngine.Cloud => CloudVoice,
+        VoiceOutputEngine.Local => LocalVoice,
+        _ => WindowsVoice,
+    };
+
     public SpeechSettings Normalize() => this with
     {
         Engine = Enum.IsDefined(Engine) ? Engine : VoiceOutputEngine.Windows,
         WindowsVoice = WindowsVoice?.Trim() ?? string.Empty,
         CloudModel = string.IsNullOrWhiteSpace(CloudModel) ? DefaultCloudModel : CloudModel.Trim(),
         CloudVoice = string.IsNullOrWhiteSpace(CloudVoice) ? DefaultCloudVoice : CloudVoice.Trim().ToLowerInvariant(),
+        LocalVoice = LocalVoice?.Trim() ?? string.Empty,
+        LocalModel = string.IsNullOrWhiteSpace(LocalModel) ? LocalVoiceModels.DefaultModel : LocalModel.Trim(),
+        LocalModelPath = LocalModelPath?.Trim().Trim('"') ?? string.Empty,
+        LocalThreads = Math.Clamp(LocalThreads, 0, MaxLocalThreads),
         Rate = double.IsFinite(Rate) ? Math.Clamp(Rate, MinRate, MaxRate) : 1.0,
         Volume = double.IsFinite(Volume) ? Math.Clamp(Volume, 0, 1) : 1.0,
         OutputDevice = OutputDevice?.Trim() ?? string.Empty,
@@ -82,6 +114,10 @@ public sealed record SpeechSettings(
         && WindowsVoice == other.WindowsVoice
         && CloudModel == other.CloudModel
         && CloudVoice == other.CloudVoice
+        && LocalVoice == other.LocalVoice
+        && LocalModel == other.LocalModel
+        && LocalModelPath == other.LocalModelPath
+        && LocalThreads == other.LocalThreads
         && Rate.Equals(other.Rate)
         && Volume.Equals(other.Volume)
         && OutputDevice == other.OutputDevice
@@ -90,5 +126,5 @@ public sealed record SpeechSettings(
         && QuietInFocusAssist == other.QuietInFocusAssist
         && (ReferenceEquals(IgnoreMicApps, other.IgnoreMicApps) || (IgnoreMicApps ?? []).SequenceEqual(other.IgnoreMicApps ?? [], StringComparer.Ordinal));
 
-    public override int GetHashCode() => HashCode.Combine(QuietMode, Engine, WindowsVoice, Rate, Volume, OutputDevice, IgnoreMicApps?.Count ?? 0);
+    public override int GetHashCode() => HashCode.Combine(QuietMode, Engine, WindowsVoice, LocalVoice, Rate, Volume, OutputDevice, IgnoreMicApps?.Count ?? 0);
 }
