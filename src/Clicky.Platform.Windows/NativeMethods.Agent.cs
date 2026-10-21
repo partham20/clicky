@@ -17,17 +17,10 @@ internal static partial class NativeMethods
     internal const uint MouseeventfHWheel = 0x1000;
 
     internal const int WheelDelta = 120;
-    internal const uint GaRoot = 2;
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool SetCursorPos(int x, int y);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint WindowFromPoint(Point point);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint GetAncestor(nint hwnd, uint gaFlags);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Windows.Threading;
+using Clicky.App.Agent;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
 using Clicky.App.Ink;
@@ -8,6 +9,7 @@ using Clicky.App.Views;
 using Clicky.App.Views.Home;
 using Clicky.App.Walkthroughs;
 using Clicky.Core;
+using Clicky.Core.Agent;
 using Clicky.Core.Annotations;
 using Clicky.Core.Assistant;
 using Clicky.Core.Assistant.ClaudeCode;
@@ -27,6 +29,7 @@ using Clicky.Core.Talk;
 using Clicky.Core.Updates;
 using Clicky.Core.Voice;
 using Clicky.Core.Walkthroughs;
+using Clicky.Platform.Windows.Agent;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Dictation;
@@ -182,6 +185,15 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<InkTrailService>();
         services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
         services.AddSingleton<InkTrailDemo>();
+
+        // M13 computer use: UI Automation first, Clicky's own browser over CDP, SendInput only with
+        // permission. The backends pick up IConnectorTools (registered above) for connector tools.
+        services.AddSingleton<ChromeHost>();
+        services.AddSingleton<WindowsComputerControl>();
+        services.AddSingleton<IComputerControl>(sp => sp.GetRequiredService<WindowsComputerControl>());
+        services.AddSingleton<IAgentPresenter, AgentPresenter>();
+        services.AddSingleton<ComputerAgent>();
+        services.AddSingleton<IComputerAgent>(sp => sp.GetRequiredService<ComputerAgent>());
 
         // M6 Talk: the computer-use agent (M13) is optional; TalkLoop hands over to it when registered.
         services.AddSingleton(sp => new TalkLoop(

@@ -74,6 +74,12 @@ public sealed class CdpConnection : IAsyncDisposable
         _pending[id] = completion;
         try
         {
+            // Checked after registering, so a close that races this either fails it here or in the receive loop's cleanup.
+            if (!IsOpen)
+            {
+                throw new CdpException($"The browser connection is closed ({method}).");
+            }
+
             var bytes = Encoding.UTF8.GetBytes(message.ToJsonString());
             await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
