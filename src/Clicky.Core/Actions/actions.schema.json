@@ -18,7 +18,8 @@
     { "$ref": "#/$defs/ask_permission" },
     { "$ref": "#/$defs/done" },
     { "$ref": "#/$defs/open_url" },
-    { "$ref": "#/$defs/use_tool" }
+    { "$ref": "#/$defs/use_tool" },
+    { "$ref": "#/$defs/routine" }
   ],
   "$defs": {
     "say": {
@@ -198,6 +199,34 @@
         "input": { "type": "object", "description": "The tool's arguments, matching its input schema." }
       },
       "required": ["type", "name", "input"],
+      "additionalProperties": false
+    },
+    "routine": {
+      "type": "object",
+      "description": "Set up a routine: a prompt Clicky runs by itself on a schedule while it is open, e.g. \"brief me every morning\" or \"check my inbox every few hours\". Use it only when the user asks for something to happen regularly or at a later time. Clicky shows it to the user, who saves it or not, so say in a sentence what you are setting up and never say it is saved.",
+      "properties": {
+        "type": { "const": "routine" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Short name, e.g. \"Morning briefing\"." },
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "What to do each time, as a complete instruction that makes sense on its own later, without the screen or this conversation." },
+        "schedule": {
+          "type": "object",
+          "description": "When it runs, in the user's local time. 'every morning' = daily 08:00, 'every evening' = daily 18:00, 'every weekday' = weekdays, 'every few hours' = every 180 minutes from 09:00 until 21:00, 'every hour' = every 60 minutes.",
+          "properties": {
+            "kind": { "type": "string", "enum": ["once", "daily", "weekdays", "weekly", "every", "monthly", "cron", "startup"] },
+            "time": { "type": "string", "maxLength": 8, "description": "HH:mm, 24-hour (once, daily, weekdays, weekly, monthly)." },
+            "date": { "type": "string", "maxLength": 10, "description": "once: YYYY-MM-DD." },
+            "days": { "type": "array", "maxItems": 7, "items": { "type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }, "description": "weekly, or to limit daily or every to some days." },
+            "every_minutes": { "type": "integer", "minimum": 5, "maximum": 10080, "description": "every: minutes between runs." },
+            "from": { "type": "string", "maxLength": 8, "description": "every: HH:mm of the first run each day." },
+            "until": { "type": "string", "maxLength": 8, "description": "every: no runs at or after this HH:mm." },
+            "day_of_month": { "type": "integer", "minimum": 1, "maximum": 31, "description": "monthly: 31 means the last day." },
+            "cron": { "type": "string", "maxLength": 100, "description": "cron: five fields (minute hour day-of-month month day-of-week). Only when nothing else fits." }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["type", "name", "prompt", "schedule"],
       "additionalProperties": false
     }
   }

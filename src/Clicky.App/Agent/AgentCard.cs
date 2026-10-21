@@ -41,6 +41,7 @@ internal sealed class AgentCard : Window
     private readonly TextBlock _questionText;
     private readonly TextBlock _questionDetail;
     private readonly Border _irreversible;
+    private readonly Button _allow;
     private readonly Button _always;
     private readonly Button _stop;
     private readonly DispatcherTimer _tick;
@@ -109,14 +110,14 @@ internal sealed class AgentCard : Window
             Margin = new Thickness(0, 6, 0, 0),
             Child = new TextBlock { Text = "This can't be undone.", Foreground = Danger, FontSize = 12 },
         };
-        var allow = MakeButton("Allow once", Accent, bold: true);
-        allow.Click += (_, _) => Answer(PermissionAnswer.AllowOnce);
+        _allow = MakeButton("Allow once", Accent, bold: true);
+        _allow.Click += (_, _) => Answer(PermissionAnswer.AllowOnce);
         _always = MakeButton("Always for this conversation", Ink);
         _always.Click += (_, _) => Answer(PermissionAnswer.AlwaysThisConversation);
         var notNow = MakeButton("Not now", Ink);
         notNow.Click += (_, _) => Answer(PermissionAnswer.NotNow);
         var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-        foreach (var button in new[] { allow, _always, notNow })
+        foreach (var button in new[] { _allow, _always, notNow })
         {
             button.Margin = new Thickness(0, 0, 6, 4);
             buttons.Children.Add(button);
@@ -196,6 +197,7 @@ internal sealed class AgentCard : Window
         _questionDetail.Text = prompt.Detail ?? string.Empty;
         _questionDetail.Visibility = string.IsNullOrWhiteSpace(prompt.Detail) ? Visibility.Collapsed : Visibility.Visible;
         _irreversible.Visibility = prompt.Irreversible ? Visibility.Visible : Visibility.Collapsed;
+        _allow.Content = prompt.AllowLabel ?? "Allow once";
         _always.Visibility = prompt.OffersAlways ? Visibility.Visible : Visibility.Collapsed;
         _question.Visibility = Visibility.Visible;
         return _answer.Task;

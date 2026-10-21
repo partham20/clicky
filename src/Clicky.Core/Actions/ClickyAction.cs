@@ -24,6 +24,7 @@ namespace Clicky.Core.Actions;
 [JsonDerivedType(typeof(DoneAction), "done")]
 [JsonDerivedType(typeof(OpenUrlAction), "open_url")]
 [JsonDerivedType(typeof(UseToolAction), "use_tool")]
+[JsonDerivedType(typeof(RoutineAction), "routine")]
 public abstract record ClickyAction
 {
     /// <summary>The schema name of this action, e.g. "point".</summary>
@@ -44,6 +45,7 @@ public abstract record ClickyAction
         DoneAction => "done",
         OpenUrlAction => "open_url",
         UseToolAction => "use_tool",
+        RoutineAction => "routine",
         _ => throw new InvalidOperationException($"Unknown action {GetType().Name}."),
     };
 
@@ -186,4 +188,19 @@ public sealed record UseToolAction([property: JsonPropertyName("name")] string T
         other is not null && Tool == other.Tool && JsonElement.DeepEquals(Input, other.Input);
 
     public override int GetHashCode() => HashCode.Combine(Tool, Input.ValueKind);
+}
+
+/// <summary>
+/// A routine Claude proposes (M15): "brief me every morning". The user confirms it on a card before
+/// it is saved, so nothing waits on a result.
+/// </summary>
+/// <param name="Title">The routine's name ("name" in the schema).</param>
+/// <param name="Prompt">What the routine does each time, as Claude wrote it.</param>
+/// <param name="Schedule">The schedule object, read by <see cref="Routines.RoutineTools.ParseSchedule"/>.</param>
+public sealed record RoutineAction([property: JsonPropertyName("name")] string Title, string Prompt, JsonElement Schedule) : ClickyAction
+{
+    public bool Equals(RoutineAction? other) =>
+        other is not null && Title == other.Title && Prompt == other.Prompt && JsonElement.DeepEquals(Schedule, other.Schedule);
+
+    public override int GetHashCode() => HashCode.Combine(Title, Prompt, Schedule.ValueKind);
 }

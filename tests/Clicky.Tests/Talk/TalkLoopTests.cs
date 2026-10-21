@@ -6,6 +6,7 @@ using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
+using Clicky.Core.Routines;
 using Clicky.Core.Talk;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -292,6 +293,47 @@ public sealed class TalkLoopTests : IDisposable
         Assert.Null(conversation.Memory);
     }
 
+    [Fact]
+    public async Task Routines_Claude_sets_up_go_to_the_user_to_confirm_after_the_answer()
+    {
+        var proposer = new RecordingProposer();
+        using var loop = new TalkLoop(_assistant, _memory, _annotations, _ink, NullLogger<TalkLoop>.Instance, routines: proposer);
+        var routine = new RoutineAction("Morning briefing", "Brief me on today.", System.Text.Json.JsonDocument.Parse("""{"kind":"daily","time":"08:00"}""").RootElement.Clone());
+        var tagged = routine with { Title = "Inbox" };
+        _assistant.Script = (_, _, _) => Events(
+            new ReplyText("I'll set up a morning briefing."),
+            new ReplyAction(routine),
+            new ReplyToolCall(new ToolCallRecord("toolu_1", "routine", "{}"), routine),
+            new ReplyAction(tagged),
+            Completed(ReplyStop.Actions, new SayAction("I'll set up a morning briefing."), routine, tagged));
+
+        var result = await loop.AnswerAsync(Question("brief me every morning", new PixelPoint(-1280, 720)), Begin);
+
+        Assert.Equal(TalkOutcome.Answered, result.Outcome);
+        Assert.Empty(_annotations.Shown);
+        Assert.True(_replies[0].Completed);
+        Assert.Equal(2, proposer.Proposed.Count);
+        Assert.Equal((routine, "toolu_1"), (proposer.Proposed[0].Action, proposer.Proposed[0].ToolCallId));
+        Assert.Equal((tagged, (string?)null), (proposer.Proposed[1].Action, proposer.Proposed[1].ToolCallId));
+        Assert.Same(_assistant.Conversation, proposer.Proposed[0].Conversation);
+        Assert.Equal(new PixelRect(-1280, 720, -1279, 721), proposer.Proposed[0].Near);
+    }
+
+    [Fact]
+    public async Task A_routine_in_an_answer_that_was_cut_off_is_not_proposed()
+    {
+        var proposer = new RecordingProposer();
+        using var loop = new TalkLoop(_assistant, _memory, _annotations, _ink, NullLogger<TalkLoop>.Instance, routines: proposer);
+        var routine = new RoutineAction("Briefing", "Brief me.", System.Text.Json.JsonDocument.Parse("""{"kind":"startup"}""").RootElement.Clone());
+        using var cts = new CancellationTokenSource();
+        _assistant.Script = (_, _, ct) => CancelAfter(cts, new ReplyAction(routine));
+
+        var result = await loop.AnswerAsync(Question("brief me when I start"), Begin, cts.Token);
+
+        Assert.Equal(TalkOutcome.Cancelled, result.Outcome);
+        Assert.Empty(proposer.Proposed);
+    }
+
     private static TalkQuestion Question(string text, PixelPoint? cursor = null) => new(text, RequestSource.Voice, Capture, cursor);
 
     private static ReplyCompleted Completed(ReplyStop stop, params ClickyAction[] actions) =>
@@ -304,6 +346,13 @@ public sealed class TalkLoopTests : IDisposable
         {
             yield return replyEvent;
         }
+    }
+
+    private static async IAsyncEnumerable<ReplyEvent> CancelAfter(CancellationTokenSource cts, ReplyEvent first)
+    {
+        yield return first;
+        await cts.CancelAsync();
+        cts.Token.ThrowIfCancellationRequested();
     }
 
     private static async IAsyncEnumerable<ReplyEvent> Throws(Exception exception)
@@ -477,6 +526,14 @@ public sealed class TalkLoopTests : IDisposable
             Attached.Add(trail);
             return Task.FromResult(screenshot with { Png = [9, 9] });
         }
+    }
+
+    private sealed class RecordingProposer : IRoutineProposer
+    {
+        public List<(RoutineAction Action, Conversation Conversation, string? ToolCallId, PixelRect? Near)> Proposed { get; } = [];
+
+        public void Propose(RoutineAction action, Conversation conversation, string? toolCallId, PixelRect? near) =>
+            Proposed.Add((action, conversation, toolCallId, near));
     }
 
     private sealed class FakeAgent(Func<Conversation, ReplyCompleted, RequestScreenshot?, IAsyncEnumerable<ReplyEvent>> steps) : IComputerAgent

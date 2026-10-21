@@ -20,6 +20,8 @@ public static class DefaultToolResults
 {
     public const string Shown = "Shown to the user.";
 
+    public const string Proposed = "Shown to the user on a card to save or not; they hadn't answered yet, so don't assume it was saved.";
+
     public const string NotRun = "Not done: Clicky did not run this (the user moved on). Ask before trying again.";
 
     /// <summary>The result for <paramref name="call"/> when no step answered it.</summary>
@@ -31,9 +33,12 @@ public static class DefaultToolResults
             return new ToolOutcome(call.Id, call.Name, $"Rejected: {call.Error ?? "invalid input"}. Nothing was done.", IsError: true);
         }
 
-        return call.Name is "point" or "highlight" or "draw" or "step" or "wait" or "done"
-            ? new ToolOutcome(call.Id, call.Name, Shown)
-            : new ToolOutcome(call.Id, call.Name, NotRun, IsError: true);
+        return call.Name switch
+        {
+            "point" or "highlight" or "draw" or "step" or "wait" or "done" => new ToolOutcome(call.Id, call.Name, Shown),
+            "routine" => new ToolOutcome(call.Id, call.Name, Proposed),
+            _ => new ToolOutcome(call.Id, call.Name, NotRun, IsError: true),
+        };
     }
 
     /// <summary>One result per pending call, in call order: from <paramref name="results"/> by id, else the default.</summary>

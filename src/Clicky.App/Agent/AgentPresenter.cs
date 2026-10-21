@@ -43,7 +43,7 @@ internal sealed class AgentPresenter(Dispatcher dispatcher, ILogger<AgentPresent
 
         public CancellationToken StopRequested => _stop.Token;
 
-        public void ShowStep(int number, string text) => Post(() => _card.ShowStep($"Step {number}: {text}"));
+        public void ShowStep(int number, string text) => Post(() => _card.ShowStep(number > 0 ? $"Step {number}: {text}" : text));
 
         public async Task<bool> CountdownAsync(string upcoming, TimeSpan duration, CancellationToken cancellationToken)
         {

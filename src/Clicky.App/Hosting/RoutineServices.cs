@@ -1,5 +1,6 @@
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Agent;
 using Clicky.Core.Clickys;
 using Clicky.Core.Routines;
 using Clicky.Core.Settings;
@@ -35,6 +36,13 @@ internal static class RoutineServices
 
         // For chat and agent loops: "do this every morning" becomes create_routine.
         services.AddSingleton(sp => new RoutineTools(sp.GetRequiredService<RoutineEngine>()));
+
+        // Talk and text mode: Claude's routine action, saved once the user agrees on the agent card.
+        services.AddSingleton(sp => new RoutineProposer(
+            sp.GetRequiredService<RoutineEngine>(),
+            sp.GetRequiredService<IAgentPresenter>(),
+            sp.GetRequiredService<ILogger<RoutineProposer>>()));
+        services.AddSingleton<IRoutineProposer>(sp => sp.GetRequiredService<RoutineProposer>());
 
         services.AddSettingsSection<RoutinesSettingsView>(SettingsPages.Agents, order: 20);
         services.AddHostedService<RoutineStartup>();
