@@ -6,7 +6,7 @@ namespace Clicky.Tests.Assistant;
 public sealed class ActionSchemaTests
 {
     private static readonly string[] s_expectedNames =
-        ["say", "point", "highlight", "draw", "step", "click", "type", "key", "scroll", "wait", "ask_permission", "done"];
+        ["say", "point", "highlight", "draw", "step", "click", "type", "key", "scroll", "wait", "ask_permission", "done", "open_url", "use_tool"];
 
     private static readonly ClickyAction[] s_actions =
     [
@@ -19,16 +19,19 @@ public sealed class ActionSchemaTests
         new ClickAction(100, 200, MouseButton.Right, 2, "Save button"),
         new TypeAction("hello world"),
         new KeyAction("Ctrl+S"),
+        new KeyAction("Tab", Repeat: 3),
         new ScrollAction(5, 6, ScrollDirection.Down, 4),
         new WaitAction(500),
         new AskPermissionAction("Send the email to Priya", "It can't be unsent", ActionRisk.Irreversible),
         new DoneAction("Saved the file.", true),
+        new OpenUrlAction("https://github.com/notifications"),
+        new UseToolAction("github__create_issue", JsonSerializer.SerializeToElement(new { title = "Bug", labels = new[] { "ui" } })),
     ];
 
     public static TheoryData<ClickyAction> EveryAction => new(s_actions);
 
     [Fact]
-    public void Schema_has_the_twelve_actions_in_order_with_descriptions()
+    public void Schema_has_the_fourteen_actions_in_order_with_descriptions()
     {
         var schema = ActionSchema.Default;
 

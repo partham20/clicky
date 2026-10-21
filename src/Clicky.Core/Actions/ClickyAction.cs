@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Clicky.Core.Actions;
@@ -21,6 +22,8 @@ namespace Clicky.Core.Actions;
 [JsonDerivedType(typeof(WaitAction), "wait")]
 [JsonDerivedType(typeof(AskPermissionAction), "ask_permission")]
 [JsonDerivedType(typeof(DoneAction), "done")]
+[JsonDerivedType(typeof(OpenUrlAction), "open_url")]
+[JsonDerivedType(typeof(UseToolAction), "use_tool")]
 public abstract record ClickyAction
 {
     /// <summary>The schema name of this action, e.g. "point".</summary>
@@ -39,12 +42,21 @@ public abstract record ClickyAction
         WaitAction => "wait",
         AskPermissionAction => "ask_permission",
         DoneAction => "done",
+        OpenUrlAction => "open_url",
+        UseToolAction => "use_tool",
         _ => throw new InvalidOperationException($"Unknown action {GetType().Name}."),
     };
 
     /// <summary>True for actions that change something on the computer and so need the permission gate.</summary>
     [JsonIgnore]
-    public bool ControlsComputer => this is ClickAction or TypeAction or KeyAction or ScrollAction;
+    public bool ControlsComputer => this is ClickAction or TypeAction or KeyAction or ScrollAction or OpenUrlAction;
+
+    /// <summary>
+    /// True for actions the model expects a result from (the computer-use agent runs them and
+    /// continues): computer control, connector tools and permission questions.
+    /// </summary>
+    [JsonIgnore]
+    public bool NeedsResult => ControlsComputer || this is UseToolAction or AskPermissionAction;
 }
 
 public sealed record SayAction(string Text) : ClickyAction;
@@ -123,7 +135,8 @@ public sealed record ClickAction(double X, double Y, MouseButton Button = MouseB
 public sealed record TypeAction(string Text) : ClickyAction;
 
 /// <param name="Keys">A key or chord as the model wrote it, e.g. "Ctrl+S".</param>
-public sealed record KeyAction(string Keys) : ClickyAction;
+/// <param name="Repeat">How many times to press it.</param>
+public sealed record KeyAction(string Keys, int Repeat = 1) : ClickyAction;
 
 [JsonConverter(typeof(JsonStringEnumConverter<ScrollDirection>))]
 public enum ScrollDirection
@@ -160,3 +173,17 @@ public enum ActionRisk
 public sealed record AskPermissionAction(string Action, string? Reason = null, ActionRisk Risk = ActionRisk.Normal) : ClickyAction;
 
 public sealed record DoneAction(string? Summary = null, bool Success = true) : ClickyAction;
+
+/// <param name="Url">An absolute http or https address (checked by the parser).</param>
+public sealed record OpenUrlAction(string Url) : ClickyAction;
+
+/// <summary>A call to a connected app's tool (M16). On the API backend these arrive as real tool calls.</summary>
+/// <param name="Tool">The model-facing tool name, e.g. "github__create_issue" ("name" in the schema).</param>
+/// <param name="Input">The arguments, a JSON object.</param>
+public sealed record UseToolAction([property: JsonPropertyName("name")] string Tool, JsonElement Input) : ClickyAction
+{
+    public bool Equals(UseToolAction? other) =>
+        other is not null && Tool == other.Tool && JsonElement.DeepEquals(Input, other.Input);
+
+    public override int GetHashCode() => HashCode.Combine(Tool, Input.ValueKind);
+}

@@ -27,6 +27,13 @@ public sealed record ReplyScreenshotTaken(RequestScreenshot Screenshot) : ReplyE
 /// <summary>The model produced an action that failed validation; it was dropped and the reply went on.</summary>
 public sealed record ReplyActionRejected(string Name, string Reason) : ReplyEvent;
 
+/// <summary>
+/// A tool call finished (API backend only), right after its <see cref="ReplyAction"/> or
+/// <see cref="ReplyActionRejected"/>. The agent loop answers it by <see cref="ToolCallRecord.Id"/>.
+/// </summary>
+/// <param name="Action">The validated action (a <see cref="UseToolAction"/> for a connector tool); null when rejected.</param>
+public sealed record ReplyToolCall(ToolCallRecord Call, ClickyAction? Action) : ReplyEvent;
+
 public enum ReplyStop
 {
     /// <summary>The model finished.</summary>
@@ -53,6 +60,7 @@ public sealed record ReplyUsage(long InputTokens, long OutputTokens, long CacheR
 /// </param>
 /// <param name="FirstText">Time from the request to the first spoken text, if there was any.</param>
 /// <param name="Model">The model that actually answered (a fallback may differ from the one asked for).</param>
+/// <param name="ToolCalls">Every tool call of the reply in order (API backend; empty for action tags).</param>
 public sealed record ReplyCompleted(
     ReplyStop Stop,
     IReadOnlyList<ClickyAction> Actions,
@@ -60,8 +68,12 @@ public sealed record ReplyCompleted(
     TimeSpan? FirstText,
     TimeSpan Elapsed,
     string Model,
-    string? Detail = null) : ReplyEvent
+    string? Detail = null,
+    IReadOnlyList<ReplyToolCall>? ToolCalls = null) : ReplyEvent
 {
     /// <summary>Everything the reply said, joined.</summary>
     public string SpokenText => string.Concat(Actions.OfType<SayAction>().Select(a => a.Text));
+
+    /// <summary><see cref="ToolCalls"/>, never null.</summary>
+    public IReadOnlyList<ReplyToolCall> Calls => ToolCalls ?? [];
 }
