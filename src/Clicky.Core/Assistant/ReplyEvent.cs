@@ -12,12 +12,6 @@ public abstract record ReplyEvent;
 /// <param name="Reason">Why the router picked this tier, for the log.</param>
 public sealed record ReplyStarted(ClaudeBackendKind Backend, string Model, ModelTier Tier, string Reason) : ReplyEvent;
 
-/// <summary>
-/// An agent step took a new screenshot (it opens the step, before <see cref="ReplyStarted"/>). Map
-/// the step's point, highlight and step actions with its geometry.
-/// </summary>
-public sealed record ReplyScreenshotTaken(RequestScreenshot Screenshot) : ReplyEvent;
-
 /// <summary>Spoken text as it streams; feed it to the sentence speaker.</summary>
 public sealed record ReplyText(string Text) : ReplyEvent;
 

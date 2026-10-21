@@ -9,6 +9,7 @@ using Clicky.Core.Connectors;
 using Clicky.Core.Geometry;
 using Clicky.Core.Memory;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Microsoft.Extensions.Logging;
 
 namespace Clicky.Core.Agent;
@@ -40,7 +41,7 @@ public sealed class ComputerAgent(
     ILogger<ComputerAgent> logger,
     IConnectorTools? connectors = null,
     IMemoryService? memory = null,
-    TimeProvider? time = null)
+    TimeProvider? time = null) : IComputerAgent
 {
     /// <summary>After acting, how long the screen gets to settle before the next screenshot.</summary>
     public static readonly TimeSpan SettleDelay = TimeSpan.FromMilliseconds(600);
@@ -564,6 +565,12 @@ public sealed class ComputerAgent(
                 if (!run.Settings.Enabled)
                 {
                     return new Planned(call, action, name, ItemKind.Control, name, Risk.Normal, Refusal: "Not done: acting on the computer is switched off in Clicky's settings. Tell the user.");
+                }
+
+                // The card is clickable, so it must not be what the action (or its inspection) hits.
+                if (PointOf(action, geometry) is { } point)
+                {
+                    run.Card?.Avoid(point);
                 }
 
                 ControlTarget target;
