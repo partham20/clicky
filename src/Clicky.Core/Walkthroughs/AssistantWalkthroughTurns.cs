@@ -59,7 +59,7 @@ public sealed class AssistantWalkthroughTurns(
             var request = new ClaudeRequest(
                 turn.Prompt,
                 RequestSource.Walkthrough,
-                new RequestScreenshot(shot.Png, shot.Geometry),
+                new RequestScreenshot(shot.Image, shot.Geometry),
                 Context: skills.ContextFor(current, app));
             logger.LogDebug("Walkthrough turn after step {Index} ({Reason}) in {App}, screenshot {Geometry}", turn.StepIndex, turn.Reason, app, shot.Geometry);
 

@@ -328,6 +328,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<VoiceStartup>();
         services.AddHostedService<UpdateStartup>();
         services.AddHostedService<ConnectorStartup>();
+        services.AddHostedService<ClaudeCodeStartup>();
         services.AddHostedService<DictationCoordinator>();
         services.AddHostedService<ClickyStartup>();
         services.AddHostedService<WalkthroughStartup>();

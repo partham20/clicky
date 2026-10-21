@@ -19,8 +19,8 @@ namespace Clicky.Core.Talk;
 /// </summary>
 /// <remarks>
 /// <para>Order of a Talk: <see cref="Begin"/> when the keys go down (stops the answer in flight,
-/// clears the marks, fetches memory and starts the backend warming up, which hides Claude Code's
-/// 2-3 s start), then <see cref="AnswerAsync"/> once the speech is text.</para>
+/// clears the marks, fetches memory and gets the backend ready: Claude Code started if none is
+/// running, or an API connection opened), then <see cref="AnswerAsync"/> once the speech is text.</para>
 /// <para>Thread-safe. One answer at a time: a new question cancels the one in flight and waits for
 /// its turn to be stored before asking, because a conversation takes one reply at a time.</para>
 /// </remarks>
@@ -196,7 +196,7 @@ public sealed class TalkLoop : IDisposable
             pointer = CoordinateMapper.ToScreenshot(cursor, geometry);
         }
 
-        return new RequestScreenshot(capture.Png, geometry, pointer);
+        return new RequestScreenshot(capture.Image, geometry, pointer);
     }
 
     private void StopAnswer()

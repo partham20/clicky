@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Clicky.Core;
 using Clicky.Core.Assistant;
+using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
 using Clicky.Core.Ink;
 using Clicky.Core.Settings;
@@ -98,16 +99,16 @@ internal sealed class InkTrailService : IInkTrailService, IDisposable
             return screenshot;
         }
 
-        var png = screenshot.Png;
+        var image = screenshot.Image;
         if (settings.Ink.DrawOnScreenshot && ink.Strokes.Count > 0)
         {
             try
             {
-                var (pixels, width, height) = await PngPixels.DecodeAsync(png, cancellationToken).ConfigureAwait(false);
+                var (pixels, width, height) = await ScreenshotCodec.DecodeAsync(image, cancellationToken).ConfigureAwait(false);
                 if (width == geometry.ImageWidth && height == geometry.ImageHeight)
                 {
                     InkPainter.Paint(pixels, width, height, ink.Strokes);
-                    png = await PngPixels.EncodeAsync(pixels, width, height, cancellationToken).ConfigureAwait(false);
+                    image = await ScreenshotCodec.EncodeAsync(pixels, width, height, ScreenshotCodec.FormatOf(image), settings.Capture.JpegQuality, cancellationToken: cancellationToken).ConfigureAwait(false);
                     ink = ink with { DrawnOnScreenshot = true };
                 }
                 else
@@ -124,10 +125,10 @@ internal sealed class InkTrailService : IInkTrailService, IDisposable
         _logger.LogInformation("Ink: {Samples} samples over {Seconds:0.0} s -> {Description}", trail.Samples.Count, trail.Duration.TotalSeconds, ink.Describe());
         if (settings.Debug.SaveCaptures && ink.DrawnOnScreenshot)
         {
-            await SaveDebugCopyAsync(png).ConfigureAwait(false);
+            await SaveDebugCopyAsync(image).ConfigureAwait(false);
         }
 
-        return screenshot with { Png = png, Ink = ink };
+        return screenshot with { Image = image, Ink = ink };
     }
 
     public void Dispose()
@@ -154,19 +155,20 @@ internal sealed class InkTrailService : IInkTrailService, IDisposable
         _keepVisible = null;
     }
 
-    private async Task SaveDebugCopyAsync(byte[] png)
+    private async Task SaveDebugCopyAsync(byte[] image)
     {
         try
         {
             Directory.CreateDirectory(_paths.DebugCapturesDirectory);
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-            var path = Path.Combine(_paths.DebugCapturesDirectory, $"{stamp}-ink.png");
+            var extension = ScreenshotCodec.FormatOf(image) == ScreenshotFormat.Jpeg ? "jpg" : "png";
+            var path = Path.Combine(_paths.DebugCapturesDirectory, $"{stamp}-ink.{extension}");
             for (var n = 1; File.Exists(path); n++)
             {
-                path = Path.Combine(_paths.DebugCapturesDirectory, $"{stamp}-ink-{n}.png");
+                path = Path.Combine(_paths.DebugCapturesDirectory, $"{stamp}-ink-{n}.{extension}");
             }
 
-            await File.WriteAllBytesAsync(path, png).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(path, image).ConfigureAwait(false);
             _logger.LogInformation("Saved debug ink capture {Path}", path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

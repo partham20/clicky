@@ -15,6 +15,13 @@ public enum CaptureMode
     AllMonitors,
 }
 
+/// <summary>How a screenshot is encoded. Names are written to settings.json, so do not rename them.</summary>
+public enum ScreenshotFormat
+{
+    Jpeg,
+    Png,
+}
+
 /// <param name="Mode">What to capture.</param>
 /// <param name="CursorPosition">
 /// Pointer position to use for <see cref="CaptureMode.MonitorUnderCursor"/> and for debug crosshairs.
@@ -22,11 +29,14 @@ public enum CaptureMode
 /// </param>
 public readonly record struct CaptureTarget(CaptureMode Mode, PixelPoint? CursorPosition = null);
 
-/// <param name="Png">The downscaled screenshot.</param>
-/// <param name="Geometry">Maps between <paramref name="Png"/>'s pixels and the screen.</param>
+/// <param name="Image">The downscaled screenshot, encoded as settings.capture.format says (see <see cref="ImageMediaType"/>).</param>
+/// <param name="Geometry">Maps between <paramref name="Image"/>'s pixels and the screen.</param>
 /// <param name="Monitor">The captured monitor, or null for windows and all-monitor captures.</param>
-/// <param name="Elapsed">Wall time from request to encoded PNG.</param>
-public sealed record CaptureResult(byte[] Png, ScreenshotGeometry Geometry, MonitorInfo? Monitor, TimeSpan Elapsed);
+/// <param name="Elapsed">Wall time from request to encoded image.</param>
+public sealed record CaptureResult(byte[] Image, ScreenshotGeometry Geometry, MonitorInfo? Monitor, TimeSpan Elapsed)
+{
+    public string MediaType => ImageMediaType.Of(Image);
+}
 
 public interface ICaptureService
 {

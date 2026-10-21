@@ -8,8 +8,9 @@ namespace Clicky.Core.Assistant.ClaudeCode;
 
 /// <summary>
 /// One running Claude Code process and the stream-json protocol on it: user messages and control
-/// requests (initialize, set_model, interrupt) go to stdin; a pump reads stdout, answers control
-/// responses and queues everything else for the reply being read. Lives as long as one conversation.
+/// requests (initialize, set_model, interrupt…) go to stdin; a pump reads stdout, answers control
+/// responses and queues everything else for the reply being read. Starts as a spare that belongs to
+/// no conversation, then holds one conversation for the rest of its life.
 /// </summary>
 internal sealed class ClaudeCliSession : IDisposable
 {
@@ -20,25 +21,40 @@ internal sealed class ClaudeCliSession : IDisposable
     private readonly SemaphoreSlim _write = new(1, 1);
     private int _nextRequest;
 
-    public ClaudeCliSession(IClaudeCliProcess process, Guid conversationId, int generation, string model)
+    public ClaudeCliSession(IClaudeCliProcess process, string model, ClaudeEffort? effort)
     {
         _process = process;
-        ConversationId = conversationId;
-        Generation = generation;
         Model = model;
+        Effort = effort;
         Pump = Task.Run(PumpAsync);
     }
 
-    public Guid ConversationId { get; }
+    /// <summary>The conversation this process holds, or null while it is a fresh spare that any conversation can take.</summary>
+    public Guid? ConversationId { get; private set; }
 
-    /// <summary><see cref="Conversation.Generation"/> when the session started; a trim since means its context is stale.</summary>
-    public int Generation { get; }
+    /// <summary><see cref="Conversation.Generation"/> when the process took the conversation; a trim since means Clicky's history is shorter than the process's.</summary>
+    public int Generation { get; private set; }
 
     /// <summary>The model the process is using now.</summary>
     public string Model { get; set; }
 
+    /// <summary>The effort level the process is using now; null for Claude Code's default.</summary>
+    public ClaudeEffort? Effort { get; set; }
+
+    /// <summary>Whether the model may think first; null for Claude Code's default (adaptive).</summary>
+    public bool? Thinking { get; set; }
+
+    /// <summary>The memory block the process was given (it can change after feedback).</summary>
+    public string? Memory { get; set; }
+
     /// <summary>Turns of the conversation this process has seen (as a seed transcript or live).</summary>
     public int TurnsSeen { get; set; }
+
+    /// <summary>Screenshots and pictures in the process's history; each one is uploaded again with every request.</summary>
+    public int ImagesSeen { get; set; }
+
+    /// <summary>Tokens of context the last request carried (input, cache reads and writes).</summary>
+    public long ContextTokens { get; set; }
 
     /// <summary>The connector tool list this process was last shown (see ClaudeCodeBackend), or null for none yet.</summary>
     public string? ToolCatalogKey { get; set; }
@@ -47,6 +63,16 @@ internal sealed class ClaudeCliSession : IDisposable
     public Task? Ready { get; set; }
 
     public bool IsAlive => !_process.HasExited && !Pump.IsCompleted;
+
+    /// <summary>Started, initialized and still running.</summary>
+    public bool IsReady => IsAlive && Ready is { IsCompletedSuccessfully: true };
+
+    /// <summary>Gives a fresh process its conversation.</summary>
+    public void Bind(Conversation conversation)
+    {
+        ConversationId = conversation.Id;
+        Generation = conversation.Generation;
+    }
 
     public string ErrorTail => _process.ErrorTail;
 

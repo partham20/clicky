@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Clicky.Core.Actions;
+using Clicky.Core.Capture;
 using Clicky.Core.Connectors;
 using Clicky.Core.Prompts;
 using Clicky.Core.Settings;
@@ -20,9 +21,14 @@ namespace Clicky.Core.Assistant.ClaudeCode;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Starting Claude Code takes 2-3 s, so one process is kept per conversation: <see cref="Prepare"/>
-/// starts it when the user presses Talk (hidden behind their speaking), later turns reuse it, and
-/// the router's model is switched with a control message (about 0.1 s) instead of a restart.
+/// Starting Claude Code takes 2-6 s, so nobody should wait for it. One process holds the
+/// conversation and later turns reuse it; the router's model, effort and thinking are switched with
+/// control messages (a few ms) instead of a restart. A fresh spare is started ahead of need: at
+/// startup and after an idle conversation is closed (settings.claude.keepWarm), when the user presses
+/// Talk without one, and when the process's history has grown heavy (every screenshot in it is
+/// uploaded again with each request). A new conversation, or the next new question after the
+/// history grew heavy, moves to the spare once it is ready, with the earlier turns as text. A process
+/// is never replaced in the middle of an answer or an agent's steps.
 /// </para>
 /// <para>
 /// It runs with no tools, no MCP servers, no settings, CLAUDE.md, skills or hooks (--safe-mode), in
@@ -46,6 +52,12 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
     internal const int MaxSchemaChars = 2_000;
 
+    /// <summary>Screenshots and pictures a process may hold before the next new question moves to a fresh one.</summary>
+    internal const int MaxSessionImages = 6;
+
+    /// <summary>Context a process may carry before the next new question moves to a fresh one.</summary>
+    internal const long MaxSessionTokens = 60_000;
+
     private static readonly string[] s_removeEnvironment = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"];
 
     private static readonly TimeSpan s_connectorWait = TimeSpan.FromSeconds(1.5);
@@ -58,7 +70,10 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
     private readonly SemaphoreSlim _turn = new(1, 1);
     private readonly Lock _gate = new();
     private readonly Timer _idle;
+
+    // The process holding the conversation, and a spare starting up for the next one. Under _gate.
     private ClaudeCliSession? _session;
+    private ClaudeCliSession? _spare;
 
     public ClaudeCodeBackend(ISettingsStore settings, ClickyPaths paths, ILogger<ClaudeCodeBackend> logger, IConnectorTools? connectors = null)
         : this(settings, paths.ClaudeCodeDirectory, logger, ClaudeCliProcess.Start, connectors)
@@ -82,20 +97,78 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
     public ClaudeBackendKind Kind => ClaudeBackendKind.Subscription;
 
+    /// <summary>A spare process is started and initialized (for tests).</summary>
+    internal bool SpareReady
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _spare is { IsReady: true };
+            }
+        }
+    }
+
     public void Prepare(Conversation conversation)
     {
         try
         {
             lock (_gate)
             {
-                if (IsUsable(_session, conversation))
+                var current = _session;
+                var ready = Holds(current, conversation) ? !Worn(current!, conversation) : IsFresh(current);
+                if (ready)
                 {
                     return;
                 }
             }
 
-            _ = Task.Run(() => SessionFor(conversation, _settings.Current.Claude.SubscriptionFastModel, CancellationToken.None))
-                .ContinueWith(t => _logger.LogWarning(t.Exception?.GetBaseException(), "Could not start Claude Code ahead of time"), TaskContinuationOptions.OnlyOnFaulted);
+            // Out of the caller's way: finding and starting claude.exe touches the disk.
+            _ = Task.Run(() =>
+            {
+                lock (_gate)
+                {
+                    EnsureSpare();
+                }
+            }).ContinueWith(t => _logger.LogWarning(t.Exception?.GetBaseException(), "Could not start Claude Code ahead of time"), TaskContinuationOptions.OnlyOnFaulted);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogWarning(ex, "Could not start Claude Code ahead of time");
+        }
+    }
+
+    /// <summary>
+    /// Keeps a Claude Code process started while Claude Code is the backend and settings.claude.keepWarm
+    /// is on, or lets the idle spare go when either is off. Call at startup and after settings change.
+    /// Never throws.
+    /// </summary>
+    public void WarmUp()
+    {
+        try
+        {
+            ClaudeCliSession? released = null;
+            lock (_gate)
+            {
+                if (WantsWarm())
+                {
+                    if (!(_session?.IsAlive ?? false))
+                    {
+                        EnsureSpare();
+                    }
+                }
+                else if (_spare is not null)
+                {
+                    released = _spare;
+                    _spare = null;
+                }
+            }
+
+            if (released is not null)
+            {
+                _logger.LogInformation("Closing the spare Claude Code (keepWarm is off or Claude Code is not the backend)");
+                released.Dispose();
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -120,15 +193,15 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         ClaudeRequest request,
         string model,
         ClaudeEffort effort,
+        bool thinking,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Claude Code sets its own thinking effort per model; effort applies to the API backend only.
-        _ = effort;
         await _turn.WaitAsync(cancellationToken).ConfigureAwait(false);
         var limits = new HistoryLimits(_settings.Current.Claude.MaxTurns);
         var userText = PromptLibrary.UserText(request, ActionDelivery.Tags);
         var reply = new TurnState(request.Screenshot);
         var stopwatch = Stopwatch.StartNew();
+        var sent = TimeSpan.Zero;
         ClaudeCliSession? session = null;
         try
         {
@@ -136,15 +209,15 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             stall.CancelAfter(StallTimeout);
             try
             {
-                session = await SessionFor(conversation, model, stall.Token).ConfigureAwait(false);
-                if (!string.Equals(session.Model, model, StringComparison.OrdinalIgnoreCase))
-                {
-                    await session.ControlAsync(new JsonObject { ["subtype"] = "set_model", ["model"] = model }, ControlTimeout, stall.Token).ConfigureAwait(false);
-                    _logger.LogDebug("Claude Code switched from {From} to {To}", session.Model, model);
-                    session.Model = model;
-                }
+                // Connected apps settle while the process is found and set up.
+                var connectorTools = _connectors?.GetToolsAsync(s_connectorWait, stall.Token);
+                _ = connectorTools?.ContinueWith(static t => t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
-                IReadOnlyList<ConnectorTool> tools = _connectors is null ? [] : await _connectors.GetToolsAsync(s_connectorWait, stall.Token).ConfigureAwait(false);
+                // An agent's next step stays in the process that holds its earlier screenshots.
+                session = await SessionFor(conversation, newQuestion: request.Step is null, stall.Token).ConfigureAwait(false);
+                await AlignAsync(session, model, effort, thinking, stall.Token).ConfigureAwait(false);
+
+                IReadOnlyList<ConnectorTool> tools = connectorTools is null ? [] : await connectorTools.ConfigureAwait(false);
                 if (request.Tools is { Count: > 0 } extra)
                 {
                     tools = [.. tools, .. extra];
@@ -152,6 +225,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
                 await session.SendUserAsync(UserContent(conversation, session, request, userText, tools), stall.Token).ConfigureAwait(false);
                 session.TurnsSeen = conversation.Turns.Count + 1;
+                sent = stopwatch.Elapsed;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -204,11 +278,15 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
             reply.Completed = true;
             var completed = reply.Complete(stopwatch.Elapsed, model);
+            session.ContextTokens = completed.Usage.InputTokens + completed.Usage.CacheReadTokens + completed.Usage.CacheWriteTokens;
             _logger.LogInformation(
-                "Claude Code {Model} replied in {Elapsed} ms (first text {FirstText} ms): stop {Stop}, {Actions} actions, tokens in {In} (cache read {CacheRead}) out {Out}, ${Cost}",
+                "Claude Code {Model} replied in {Elapsed} ms (sent {Sent} ms, first token {FirstToken} ms, first text {FirstText} ms, thinking {Thinking}): stop {Stop}, {Actions} actions, tokens in {In} (cache read {CacheRead}) out {Out}, ${Cost}",
                 completed.Model,
                 (long)completed.Elapsed.TotalMilliseconds,
+                (long)sent.TotalMilliseconds,
+                reply.FirstToken is { } token ? (long)token.TotalMilliseconds : -1,
                 completed.FirstText is { } first ? (long)first.TotalMilliseconds : -1,
+                session.Thinking switch { true => "on", false => "off", null => "default" },
                 completed.Stop,
                 completed.Actions.Count(a => a is not SayAction),
                 completed.Usage.InputTokens,
@@ -229,7 +307,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
                 conversation.Append(
                     new ConversationTurn(
                         userText,
-                        request.Screenshot?.Png,
+                        request.Screenshot?.Image,
                         reply.SpokenText,
                         [],
                         conversation.Now,
@@ -240,6 +318,12 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
                 {
                     session.TurnsSeen = conversation.Turns.Count;
                 }
+            }
+
+            if (session is { IsAlive: true } && Worn(session, conversation))
+            {
+                // Ready by the next question, which moves to it.
+                StartSpareSafely();
             }
 
             _idle.Change(TimeSpan.FromMinutes(_settings.Current.Claude.IdleResetMinutes), Timeout.InfiniteTimeSpan);
@@ -261,7 +345,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         var executable = ClaudeCliLocator.Find(_settings.Current.Claude.CliPath)
             ?? throw new ClaudeBackendException(ClaudeFailure.NotConfigured, NotInstalledMessage());
         Directory.CreateDirectory(_directory);
-        var arguments = Arguments(model, string.Empty).ToList();
+        var arguments = Arguments(model, ClaudeEffort.Low, string.Empty).ToList();
         var promptAt = arguments.IndexOf("--system-prompt-file");
         arguments[promptAt] = "--system-prompt";
         arguments[promptAt + 1] = system;
@@ -282,7 +366,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             throw new ClaudeBackendException(ClaudeFailure.NotConfigured, $"Could not start Claude Code ({executable}): {ex.Message}", ex);
         }
 
-        using var session = new ClaudeCliSession(process, Guid.Empty, 0, model);
+        using var session = new ClaudeCliSession(process, model, ClaudeEffort.Low);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(2));
         try
@@ -329,12 +413,14 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         {
             _session?.Dispose();
             _session = null;
+            _spare?.Dispose();
+            _spare = null;
         }
 
         _turn.Dispose();
     }
 
-    internal static IReadOnlyList<string> Arguments(string model, string systemPromptFile) =>
+    internal static IReadOnlyList<string> Arguments(string model, ClaudeEffort effort, string systemPromptFile) =>
     [
         "-p",
         "--input-format", "stream-json",
@@ -342,6 +428,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         "--verbose",
         "--include-partial-messages",
         "--model", model,
+        "--effort", EffortLevel(effort),
         "--tools", string.Empty,
         "--system-prompt-file", systemPromptFile,
         "--safe-mode",
@@ -425,10 +512,18 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         var content = new JsonArray();
         var turns = conversation.Turns;
 
-        // The system prompt is fixed when Claude Code starts, so memory rides on its first message.
-        if (session.TurnsSeen == 0 && conversation.Memory is { } memory)
+        // The system prompt is fixed when Claude Code starts, so memory rides on its first message,
+        // and a change after feedback ("you talk too much") on the next one.
+        if (!string.Equals(session.Memory, conversation.Memory, StringComparison.Ordinal))
         {
-            content.Add(new JsonObject { ["type"] = "text", ["text"] = memory });
+            var memory = conversation.Memory ?? "(none)";
+            var text = session.TurnsSeen == 0 ? memory : $"[Your notes about the user changed. These replace the earlier ones:]\n{memory}";
+            if (session.TurnsSeen > 0 || conversation.Memory is not null)
+            {
+                content.Add(new JsonObject { ["type"] = "text", ["text"] = text });
+            }
+
+            session.Memory = conversation.Memory;
         }
 
         var (catalog, key) = ToolCatalog(tools, session.ToolCatalogKey);
@@ -452,8 +547,9 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
                 content.Add(new JsonObject
                 {
                     ["type"] = "image",
-                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = attachment.MediaType ?? "image/png", ["data"] = Convert.ToBase64String(image) },
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = attachment.MediaType ?? ImageMediaType.Of(image), ["data"] = Convert.ToBase64String(image) },
                 });
+                session.ImagesSeen++;
             }
         }
 
@@ -462,33 +558,76 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             content.Add(new JsonObject
             {
                 ["type"] = "image",
-                ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/png", ["data"] = Convert.ToBase64String(shot.Png) },
+                ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = shot.MediaType, ["data"] = Convert.ToBase64String(shot.Image) },
             });
+            session.ImagesSeen++;
         }
 
         content.Add(new JsonObject { ["type"] = "text", ["text"] = userText });
         return content;
     }
 
-    private static bool IsUsable(ClaudeCliSession? session, Conversation conversation) =>
-        session is { IsAlive: true } && session.ConversationId == conversation.Id && session.Generation == conversation.Generation;
+    /// <summary>The live process holds this conversation.</summary>
+    private static bool Holds(ClaudeCliSession? session, Conversation conversation) =>
+        session is { IsAlive: true } && session.ConversationId == conversation.Id;
+
+    /// <summary>A live process that has not taken a conversation yet.</summary>
+    private static bool IsFresh(ClaudeCliSession? session) => session is { IsAlive: true, ConversationId: null };
+
+    /// <summary>
+    /// The process carries more than the conversation now needs: Clicky trimmed its own history, or
+    /// the process's history is heavy to upload. The next new question moves to a fresh one.
+    /// </summary>
+    private static bool Worn(ClaudeCliSession session, Conversation conversation) =>
+        session.Generation != conversation.Generation || session.ImagesSeen >= MaxSessionImages || session.ContextTokens >= MaxSessionTokens;
+
+    /// <summary>Claude Code's --effort and effortLevel names.</summary>
+    internal static string EffortLevel(ClaudeEffort effort) => effort switch
+    {
+        ClaudeEffort.Low => "low",
+        ClaudeEffort.Medium => "medium",
+        ClaudeEffort.High => "high",
+        ClaudeEffort.XHigh => "xhigh",
+        _ => "max",
+    };
 
     private static string LastLine(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? string.Empty;
 
-    private async Task<ClaudeCliSession> SessionFor(Conversation conversation, string model, CancellationToken cancellationToken)
+    private async Task<ClaudeCliSession> SessionFor(Conversation conversation, bool newQuestion, CancellationToken cancellationToken)
     {
         ClaudeCliSession session;
+        ClaudeCliSession? retired = null;
         lock (_gate)
         {
-            if (!IsUsable(_session, conversation))
+            if (Holds(_session, conversation))
             {
-                _session?.Dispose();
-                _session = StartSession(conversation, model);
+                if (newQuestion && Worn(_session!, conversation) && _spare is { IsReady: true })
+                {
+                    _logger.LogInformation(
+                        "Moving the conversation to a fresh Claude Code ({Images} images, {Tokens} tokens of context, generation {Seen}/{Now})",
+                        _session!.ImagesSeen,
+                        _session.ContextTokens,
+                        _session.Generation,
+                        conversation.Generation);
+                    retired = _session;
+                    _session = TakeSpare();
+                }
+            }
+            else if (!IsFresh(_session))
+            {
+                var next = _spare is { IsAlive: true } ? TakeSpare() : StartSession(_settings.Current.Claude.SubscriptionFastModel);
+                retired = _session;
+                _session = next;
             }
 
             session = _session!;
+            if (session.ConversationId is null)
+            {
+                session.Bind(conversation);
+            }
         }
 
+        retired?.Dispose();
         try
         {
             await session.Ready!.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -503,31 +642,122 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         return session;
     }
 
-    private ClaudeCliSession StartSession(Conversation conversation, string model)
+    /// <summary>Puts the process on the router's model, effort and thinking; each is a control message, sent only on a change.</summary>
+    private async Task AlignAsync(ClaudeCliSession session, string model, ClaudeEffort effort, bool thinking, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(session.Model, model, StringComparison.OrdinalIgnoreCase))
+        {
+            await session.ControlAsync(new JsonObject { ["subtype"] = "set_model", ["model"] = model }, ControlTimeout, cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("Claude Code switched from {From} to {To}", session.Model, model);
+            session.Model = model;
+        }
+
+        if (session.Effort != effort)
+        {
+            await session.ControlAsync(
+                new JsonObject { ["subtype"] = "apply_flag_settings", ["settings"] = new JsonObject { ["effortLevel"] = EffortLevel(effort) } },
+                ControlTimeout,
+                cancellationToken).ConfigureAwait(false);
+            session.Effort = effort;
+        }
+
+        if (session.Thinking != thinking)
+        {
+            await SetThinkingAsync(session, thinking, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>0 turns thinking off; null goes back to Claude Code's default (adaptive).</summary>
+    private static async Task SetThinkingAsync(ClaudeCliSession session, bool thinking, CancellationToken cancellationToken)
+    {
+        await session.ControlAsync(
+            new JsonObject { ["subtype"] = "set_max_thinking_tokens", ["max_thinking_tokens"] = thinking ? null : 0 },
+            ControlTimeout,
+            cancellationToken).ConfigureAwait(false);
+        session.Thinking = thinking;
+    }
+
+    private bool WantsWarm()
+    {
+        var claude = _settings.Current.Claude;
+        return claude.Backend == ClaudeBackendKind.Subscription && claude.KeepWarm;
+    }
+
+    /// <summary>Starts a spare unless a live one exists. Under _gate.</summary>
+    private void EnsureSpare()
+    {
+        if (_spare is { IsAlive: true })
+        {
+            return;
+        }
+
+        _spare?.Dispose();
+        _spare = null;
+        var spare = StartSession(_settings.Current.Claude.SubscriptionFastModel);
+        spare.Ready!.ContinueWith(
+            t => _logger.LogWarning(t.Exception?.GetBaseException(), "The spare Claude Code failed to start: {Errors}", spare.ErrorTail),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+        _spare = spare;
+    }
+
+    private void StartSpareSafely()
+    {
+        try
+        {
+            lock (_gate)
+            {
+                EnsureSpare();
+            }
+        }
+        catch (Exception ex) when (ex is ClaudeBackendException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not start a spare Claude Code");
+        }
+    }
+
+    /// <summary>Under _gate.</summary>
+    private ClaudeCliSession TakeSpare()
+    {
+        var spare = _spare!;
+        _spare = null;
+        return spare;
+    }
+
+    private ClaudeCliSession StartSession(string model)
     {
         var executable = ClaudeCliLocator.Find(_settings.Current.Claude.CliPath)
             ?? throw new ClaudeBackendException(ClaudeFailure.NotConfigured, NotInstalledMessage());
         var promptFile = WriteSystemPrompt();
+        var effort = _settings.Current.Claude.FastEffort;
         var stopwatch = Stopwatch.StartNew();
         IClaudeCliProcess process;
         try
         {
-            process = _start(new ClaudeCliStartInfo(executable, Arguments(model, promptFile), _directory, s_removeEnvironment));
+            process = _start(new ClaudeCliStartInfo(executable, Arguments(model, effort, promptFile), _directory, s_removeEnvironment));
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
             throw new ClaudeBackendException(ClaudeFailure.NotConfigured, $"Could not start Claude Code ({executable}): {ex.Message}", ex);
         }
 
-        var session = new ClaudeCliSession(process, conversation.Id, conversation.Generation, model);
+        var session = new ClaudeCliSession(process, model, effort);
         session.Ready = InitializeAsync(session, stopwatch);
-        _logger.LogInformation("Started Claude Code for conversation {Conversation} with {Model}", conversation.Id, model);
+        _logger.LogInformation("Started Claude Code with {Model}", model);
         return session;
     }
 
     private async Task InitializeAsync(ClaudeCliSession session, Stopwatch stopwatch)
     {
         await session.ControlAsync(new JsonObject { ["subtype"] = "initialize" }, StallTimeout, CancellationToken.None).ConfigureAwait(false);
+
+        // Most questions take the fast route, so set it up while nobody is waiting.
+        if (!_settings.Current.Claude.ThinkingFor(ModelTier.Fast))
+        {
+            await SetThinkingAsync(session, thinking: false, CancellationToken.None).ConfigureAwait(false);
+        }
+
         _logger.LogInformation("Claude Code ready in {Elapsed} ms", stopwatch.ElapsedMilliseconds);
     }
 
@@ -583,6 +813,11 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             {
                 _session = null;
             }
+
+            if (ReferenceEquals(_spare, session))
+            {
+                _spare = null;
+            }
         }
 
         session.Dispose();
@@ -590,17 +825,47 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
     private void CloseIfIdle()
     {
-        ClaudeCliSession? session;
-        lock (_gate)
+        // Not while an answer (or an agent's long run of steps) is using the process.
+        if (!_turn.Wait(0))
         {
-            session = _session;
-            _session = null;
+            _idle.Change(TimeSpan.FromMinutes(_settings.Current.Claude.IdleResetMinutes), Timeout.InfiniteTimeSpan);
+            return;
         }
 
-        if (session is not null)
+        ClaudeCliSession? session;
+        try
         {
-            _logger.LogInformation("Closing idle Claude Code");
-            session.Dispose();
+            lock (_gate)
+            {
+                session = _session;
+                _session = null;
+            }
+
+            if (session is not null)
+            {
+                _logger.LogInformation("Closing idle Claude Code");
+                session.Dispose();
+            }
+
+            if (WantsWarm())
+            {
+                // The next question starts a new conversation; have a process ready for it.
+                StartSpareSafely();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // Shutting down.
+        }
+        finally
+        {
+            try
+            {
+                _turn.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
     }
 
@@ -619,6 +884,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         private readonly HashSet<string> _streamedMessages = [];
         private string? _currentMessage;
         private TimeSpan? _firstText;
+        private TimeSpan? _firstToken;
         private string? _model;
         private string? _syntheticError;
 
@@ -629,6 +895,9 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         public bool Completed { get; set; }
 
         public bool HasText => _spoken.Length > 0;
+
+        /// <summary>When the model started answering (thinking included); the gap to the first text is thinking.</summary>
+        public TimeSpan? FirstToken => _firstToken;
 
         public string SpokenText => _spoken.ToString();
 
@@ -730,6 +999,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             switch (Str(streamEvent, "type"))
             {
                 case "message_start" when streamEvent.TryGetProperty("message", out var message):
+                    _firstToken ??= elapsed;
                     _currentMessage = Str(message, "id");
                     _model = Str(message, "model") ?? _model;
                     break;

@@ -5,7 +5,9 @@ using System.Text.Json;
 using Anthropic;
 using Anthropic.Exceptions;
 using Anthropic.Models.Beta.Messages;
+using Anthropic.Models.Models;
 using Clicky.Core.Actions;
+using Clicky.Core.Capture;
 using Clicky.Core.Connectors;
 using Clicky.Core.Prompts;
 using Clicky.Core.Secrets;
@@ -54,14 +56,47 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     private AnthropicClient? _client;
     private string? _clientKey;
 
+    /// <summary>Pooled HTTP connections close after about a minute idle; within this, one is surely still open.</summary>
+    private static readonly TimeSpan s_connectionFresh = TimeSpan.FromSeconds(30);
+
     // Set when the API refused the computer toolset (an older model, or a platform without it); own tools from then on.
     private volatile bool _toolsetRefused;
 
+    // Environment.TickCount64 of the last request on the client's connections.
+    private long _lastRequest = long.MinValue / 2;
+
     public ClaudeBackendKind Kind => ClaudeBackendKind.Api;
 
+    /// <summary>
+    /// Opens a connection to the API while the user is still speaking, when the pooled one has
+    /// probably closed: DNS, TCP and TLS cost a few round trips that the question would otherwise wait for.
+    /// </summary>
     public void Prepare(Conversation conversation)
     {
-        // Nothing slow to start: the client and its connection pool are created on first use and kept.
+        if (Environment.TickCount64 - Interlocked.Read(ref _lastRequest) < s_connectionFresh.TotalMilliseconds)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (AnthropicKey.Read(secrets) is not { } key)
+                {
+                    return;
+                }
+
+                Interlocked.Exchange(ref _lastRequest, Environment.TickCount64);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await Client(key).Models.List(new ModelListParams { Limit = 1 }, timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Only a head start; the question itself reports any real problem.
+                logger.LogDebug(ex, "Could not open a connection to the API ahead of time");
+            }
+        });
     }
 
     public Task<BackendCheck> CheckAsync(CancellationToken cancellationToken = default)
@@ -84,11 +119,16 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         ClaudeRequest request,
         string model,
         ClaudeEffort effort,
+        bool thinking,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Always adaptive thinking here: a turn that ends in tool calls must be continued with thinking
+        // as it was, and the fast and deep routes take turns inside one tool loop.
+        _ = thinking;
         var key = AnthropicKey.Read(secrets) ?? throw new ClaudeBackendException(
             ClaudeFailure.NotConfigured, "Clicky needs an Anthropic API key. Add one in Settings › Claude, or switch to your Claude subscription there.");
         var client = Client(key);
+        Interlocked.Exchange(ref _lastRequest, Environment.TickCount64);
         var userText = PromptLibrary.UserText(request);
         var current = settings.Current;
         var useToolset = current.Agent.ComputerToolset && current.Agent.Enabled && !_toolsetRefused;
@@ -180,7 +220,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             // A cancelled reply (barge-in) still happened as far as the user is concerned: keep what was said.
             if (reply.Completed || reply.HasText)
             {
-                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now, request.Attachments) with { Results = results.Count > 0 ? results : null }, limits);
+                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Image, conversation.Now, request.Attachments) with { Results = results.Count > 0 ? results : null }, limits);
             }
         }
     }
@@ -246,7 +286,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             pending = turn.ToolCalls;
         }
 
-        messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, request.Step?.Results ?? conversation.UnsentResults), request.Screenshot?.Png, userText, request.Attachments));
+        messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, request.Step?.Results ?? conversation.UnsentResults), request.Screenshot?.Image, userText, request.Attachments));
 
         return new MessageCreateParams
         {
@@ -282,7 +322,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     }
 
     /// <param name="results">One per pending call, in the same order (see <see cref="DefaultToolResults.Resolve"/>).</param>
-    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, IReadOnlyList<ToolOutcome> results, byte[]? png, string text, IReadOnlyList<RequestAttachment>? attachments)
+    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, IReadOnlyList<ToolOutcome> results, byte[]? screenshot, string text, IReadOnlyList<RequestAttachment>? attachments)
     {
         var content = new List<BetaContentBlockParam>();
         for (var i = 0; i < pending.Count; i++)
@@ -312,11 +352,11 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             }
         }
 
-        if (png is not null)
+        if (screenshot is not null)
         {
             content.Add(new BetaImageBlockParam
             {
-                Source = new BetaBase64ImageSource { Data = Convert.ToBase64String(png), MediaType = MediaType.ImagePng },
+                Source = new BetaBase64ImageSource { Data = Convert.ToBase64String(screenshot), MediaType = ToMediaType(ImageMediaType.Of(screenshot)) },
             });
         }
 
@@ -626,9 +666,9 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 [.. _calls]);
         }
 
-        public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at, IReadOnlyList<RequestAttachment>? attachments) => new(
+        public ConversationTurn ToTurn(string userText, byte[]? screenshot, DateTimeOffset at, IReadOnlyList<RequestAttachment>? attachments) => new(
             userText,
-            png,
+            screenshot,
             _spoken.ToString(),
             Completed ? [.. _toolCalls] : [],
             at,

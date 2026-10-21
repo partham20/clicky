@@ -59,11 +59,14 @@ public enum RequestSource
     Walkthrough,
 }
 
-/// <param name="Png">The downscaled screenshot.</param>
+/// <param name="Image">The downscaled screenshot, JPEG or PNG (see <see cref="MediaType"/>).</param>
 /// <param name="Geometry">Its size and where it came from, so actions can be mapped back to the screen.</param>
 /// <param name="Cursor">Where the user's pointer was, in screenshot pixels, if it was on the image.</param>
 /// <param name="Ink">What the user did with the pointer while talking (set by IInkTrailService.AttachAsync).</param>
-public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, ScreenshotPoint? Cursor = null, SpatialInk? Ink = null);
+public sealed record RequestScreenshot(byte[] Image, ScreenshotGeometry Geometry, ScreenshotPoint? Cursor = null, SpatialInk? Ink = null)
+{
+    public string MediaType => Capture.ImageMediaType.Of(Image);
+}
 
 /// <param name="Text">What the user said or typed.</param>
 /// <param name="Tier">Forces the fast or deep model; null lets the router decide.</param>
