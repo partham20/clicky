@@ -1,9 +1,6 @@
-using System.Diagnostics;
 using System.Windows;
-using System.Windows.Controls;
 using Clicky.App.Buddy;
 using Clicky.App.Views;
-using Clicky.Core;
 using Clicky.Core.Updates;
 using Microsoft.Extensions.Hosting;
 
@@ -16,6 +13,12 @@ public interface IAppShell
 
     void ShowSettings();
 
+    /// <summary>Settings, open at one page (a <see cref="SettingsPage.Id"/> from <see cref="SettingsPages"/>).</summary>
+    void ShowSettingsPage(string pageId);
+
+    /// <summary>First-run setup and the hands-on tutorial; opens by itself until finished once.</summary>
+    void ShowOnboarding();
+
     /// <summary>Report a bug: describe, bundle logs into a zip, open a GitHub issue.</summary>
     void ShowBugReport();
 
@@ -26,38 +29,30 @@ public interface IAppShell
 }
 
 internal sealed class AppShell(
-    ClickyPaths paths,
     IHostApplicationLifetime lifetime,
     Func<DockedBuddyView> dockedBuddy,
-    Func<HotkeysSettingsView> hotkeysView,
-    Func<VoiceSettingsView> voiceView,
-    Func<SpeechSettingsView> speechView,
-    Func<ClaudeSettingsView> claudeView,
-    Func<MemorySettingsView> memoryView,
-    Func<ConnectorsSettingsView> connectorsView,
-    Func<DictationSettingsView> dictationView,
-    Func<UpdatesSettingsView> updatesView,
+    Func<SettingsWindow> settingsWindow,
+    Func<OnboardingWindow> onboardingWindow,
     Func<BugReportWindow> bugReport,
     UpdateService updates) : IAppShell
 {
     private PlaceholderWindow? _home;
-    private PlaceholderWindow? _settings;
+    private SettingsWindow? _settings;
+    private OnboardingWindow? _onboarding;
     private BugReportWindow? _bugReport;
 
     public void ShowHome() =>
         _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14.", extra: dockedBuddy()));
 
-    public void ShowSettings() =>
-        _settings = Activate(_settings, () => new PlaceholderWindow(
-            "Clicky Settings",
-            $"Settings pages arrive in M18. Until then, edit the file directly; changes apply live.\n\n{paths.SettingsFile}",
-            "Show settings.json",
-            () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose(),
-            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView(), speechView(), claudeView(), memoryView(), connectorsView(), dictationView(), updatesView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
-        {
-            Width = 640,
-            Height = 820,
-        });
+    public void ShowSettings() => _settings = Activate(_settings, settingsWindow);
+
+    public void ShowSettingsPage(string pageId)
+    {
+        ShowSettings();
+        _settings!.ShowPage(pageId);
+    }
+
+    public void ShowOnboarding() => _onboarding = Activate(_onboarding, onboardingWindow);
 
     public void ShowBugReport() => _bugReport = Activate(_bugReport, bugReport);
 

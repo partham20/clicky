@@ -69,6 +69,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
             FontWeight = FontWeights.SemiBold,
         });
         menu.Items.Add(new MenuItem { Header = "Settings…", Command = viewModel.OpenSettingsCommand });
+        menu.Items.Add(new MenuItem { Header = "Take the tour…", Command = viewModel.OpenOnboardingCommand });
         menu.Items.Add(new MenuItem { Header = "New conversation", Command = viewModel.NewConversationCommand, ToolTip = "Clicky forgets what you talked about so far" });
         menu.Items.Add(new Separator());
 

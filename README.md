@@ -46,6 +46,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `updates`: `autoCheck` (true), `autoDownload` (true), `feedUrl` (empty means GitHub releases of this repository; another GitHub repo URL, an https URL or a local folder with `releases.win.json` also work), `prerelease` (false). Also in Settings > Updates and support.
 - `bug-reports\clicky-bug-*.zip`: made by Report a bug; the newest 5 are kept.
 - `dictation`: `maxMinutes` (30), `typeWhileSpeaking` (true, hands-free), `spokenCommands` (true), `learnCorrections` (true), `keepHistoryDays` (30), `cleanup` (`Auto`, `Always`, `Off`), `terminalApps`, `pasteApps`. Also in Settings › Dictation. `dictionary.json` is the personal dictionary and `dictation\` the transcript history (see Dictation below).
+- `onboarding`: `completed` (false until the tour is finished or closed once), `tutorialVersion`. Onboarding opens at startup while `completed` is false, or when a newer tutorial ships.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
 ## Behaviour notes
@@ -211,6 +212,20 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 - **Terminals.** Windows Terminal, the console, mintty, PuTTY, Alacritty, WezTerm, ConEmu, Tabby, Hyper and xterm.js terminals (VS Code's) get every line break turned into a space, so dictation can never run a command. `dictation.terminalApps` adds more by exe name. Terminal pastes use Shift+Insert.
 - **Can't type there.** Administrator windows refuse input from a normal process (UIPI), so the text goes on the clipboard and the buddy says to press Ctrl+V. With nothing focused (desktop, taskbar), or when a hold is interrupted by another key, the text shows in a card with a Copy button instead of being typed into the wrong place. It is in the history either way.
 - **Timing** on the i7-13800H / RTX A1000: a sentence chunk takes 0.9 s on the GPU once warm, so in hands-free mode text appears about 1.5 s after you pause, and release-to-text after a hold is under 1 s however long you spoke.
+
+## Onboarding and Settings (M18)
+
+**Onboarding** opens at the first start (and from the tray's Take the tour, or Settings › General). It is one window, about two minutes, every step skippable:
+
+1. Welcome, with the main shortcuts (read from `hotkeys`, so it matches after rebinding).
+2. Connect Claude: subscription (Claude Code) or API key, the backend's own check, and **Try it**, a real round trip on the fast model.
+3. Microphone: the Settings › Voice section, so the Whisper download progress shows while you read on.
+4. Practice, each completed by the real feature working, not by a click: **Say hello** (any Talk answer), **Watch it draw** ("point at the blue star": the answer put a mark on screen), **Circle something** (the Talk's ink trail reads as a circle, `InkAnalyzer`), **Dictate** (text arrives in the practice box). A failed answer shows Claude's reason in place.
+5. Finish: shortcuts again and Start with Windows (on by default).
+
+Finishing or closing marks `onboarding.completed`. The flow is `OnboardingFlow` in Core (unit tested); the window listens to `TalkAnswerer.Answered`.
+
+**Settings** is a sidebar of pages: General (start with Windows, the tour, what screenshots contain, log level, debug saves), Cursor and character (follow or dock, follow smoothing, pointing while you talk), Shortcuts, Voice (input and speech), Claude, Dictation and dictionary, Memory, Connectors, Agents and Suggestions (reserved; they appear when a module adds a section), Updates and support. Pages are built when first opened and kept while the window is open. A module adds its settings with one line in DI, `services.AddSettingsSection<MyView>(SettingsPages.Agents)`; the view writes to `ISettingsStore` and follows `Changed` between Loaded and Unloaded like the others.
 
 ## Install, updates and bug reports (M18)
 

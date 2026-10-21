@@ -44,6 +44,8 @@ public sealed record ClickySettings
 
     public InkSettings Ink { get; init; } = new();
 
+    public OnboardingSettings Onboarding { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -65,6 +67,7 @@ public sealed record ClickySettings
         Connectors = (Connectors ?? new()).Normalize(),
         Dictation = (Dictation ?? new()).Normalize(),
         Ink = Ink ?? new(),
+        Onboarding = (Onboarding ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }
