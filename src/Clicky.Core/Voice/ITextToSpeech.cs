@@ -71,6 +71,17 @@ public interface ITextToSpeech
 
     /// <summary>Loads the voice so the first reply is no slower than the rest. Safe to call more than once; never throws.</summary>
     Task WarmUpAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Synthesis time grows with the length of the text, so <see cref="VoiceOutput"/> should hand
+    /// over short pieces (see <see cref="SpeechChunker"/>): a short first one, and long sentences cut at commas.
+    /// </summary>
+    bool PrefersShortChunks => false;
+
+    /// <summary>A reply is coming soon (the user just pressed Talk): get ready in the background. Returns at once; never throws.</summary>
+    void Prepare()
+    {
+    }
 }
 
 public sealed class TextToSpeechException : Exception

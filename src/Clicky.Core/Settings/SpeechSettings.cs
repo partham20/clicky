@@ -14,6 +14,7 @@ public sealed record SpeechSettings(
     string LocalModel = LocalVoiceModels.DefaultModel,
     string LocalModelPath = "",
     int LocalThreads = 0,
+    LocalVoiceProcessor LocalProcessor = LocalVoiceProcessor.Cpu,
     double Rate = 1.0,
     double Volume = 1.0,
     string OutputDevice = "",
@@ -54,8 +55,14 @@ public sealed record SpeechSettings(
     /// </summary>
     public string LocalModelPath { get; init; } = LocalModelPath;
 
-    /// <summary>CPU threads for the local voice; 0 picks half the logical cores, at most 4.</summary>
+    /// <summary>CPU threads for the local voice; 0 picks one per performance core (6 on an i7-13800H), at most 8.</summary>
     public int LocalThreads { get; init; } = LocalThreads;
+
+    /// <summary>
+    /// CPU, or an NVIDIA GPU (opt-in: a 595 MB runtime download, CUDA 12 and cuDNN 9 installed, and
+    /// a check in a separate process). Per PC, like the rest of settings.json. Applies on restart.
+    /// </summary>
+    public LocalVoiceProcessor LocalProcessor { get; init; } = LocalProcessor;
 
     /// <summary>Speaking speed, 1 is normal; clamped to <see cref="MinRate"/>..<see cref="MaxRate"/>.</summary>
     public double Rate { get; init; } = Rate;
@@ -100,6 +107,7 @@ public sealed record SpeechSettings(
         LocalModel = string.IsNullOrWhiteSpace(LocalModel) ? LocalVoiceModels.DefaultModel : LocalModel.Trim(),
         LocalModelPath = LocalModelPath?.Trim().Trim('"') ?? string.Empty,
         LocalThreads = Math.Clamp(LocalThreads, 0, MaxLocalThreads),
+        LocalProcessor = Enum.IsDefined(LocalProcessor) ? LocalProcessor : LocalVoiceProcessor.Cpu,
         Rate = double.IsFinite(Rate) ? Math.Clamp(Rate, MinRate, MaxRate) : 1.0,
         Volume = double.IsFinite(Volume) ? Math.Clamp(Volume, 0, 1) : 1.0,
         OutputDevice = OutputDevice?.Trim() ?? string.Empty,
@@ -118,6 +126,7 @@ public sealed record SpeechSettings(
         && LocalModel == other.LocalModel
         && LocalModelPath == other.LocalModelPath
         && LocalThreads == other.LocalThreads
+        && LocalProcessor == other.LocalProcessor
         && Rate.Equals(other.Rate)
         && Volume.Equals(other.Volume)
         && OutputDevice == other.OutputDevice

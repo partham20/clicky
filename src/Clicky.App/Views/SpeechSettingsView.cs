@@ -29,6 +29,7 @@ internal sealed class SpeechSettingsView : ContentControl
     private readonly ReplyPresenter _replies;
     private readonly LocalTextToSpeech _localTts;
     private readonly LocalVoiceDownloader _localModels;
+    private readonly ICpuPerformance _cpu;
     private readonly Dispatcher _dispatcher;
     private readonly ILogger<SpeechSettingsView> _logger;
     private readonly DispatcherTimer _sliderSave;
@@ -41,6 +42,9 @@ internal sealed class SpeechSettingsView : ContentControl
     private readonly ComboBox _cloudVoice = new() { MinWidth = 160, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ComboBox _localVoice = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly TextBlock _localStatus = new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) };
+    private readonly ComboBox _localProcessor = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly ComboBox _localThreads = new() { MinWidth = 200, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly TextBlock _localRunsOn = new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) };
     private readonly Slider _rate = new() { Minimum = SpeechSettings.MinRate, Maximum = SpeechSettings.MaxRate, TickFrequency = 0.1, IsSnapToTickEnabled = true, Width = 240 };
     private readonly Slider _volume = new() { Minimum = 0, Maximum = 100, TickFrequency = 5, IsSnapToTickEnabled = true, Width = 240 };
     private readonly TextBlock _rateLabel = new() { Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -57,6 +61,7 @@ internal sealed class SpeechSettingsView : ContentControl
         ReplyPresenter replies,
         LocalTextToSpeech localTts,
         LocalVoiceDownloader localModels,
+        ICpuPerformance cpu,
         Dispatcher dispatcher,
         ILogger<SpeechSettingsView> logger)
     {
@@ -64,6 +69,7 @@ internal sealed class SpeechSettingsView : ContentControl
         _replies = replies;
         _localTts = localTts;
         _localModels = localModels;
+        _cpu = cpu;
         _dispatcher = dispatcher;
         _logger = logger;
         _sliderSave = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromMilliseconds(300) };
@@ -77,6 +83,27 @@ internal sealed class SpeechSettingsView : ContentControl
         _windows.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Windows });
         _cloud.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Cloud });
         _local.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Local });
+        _localProcessor.Items.Add(new ComboBoxItem { Content = "CPU (performance cores)", Tag = LocalVoiceProcessor.Cpu });
+        _localProcessor.Items.Add(new ComboBoxItem
+        {
+            Content = "NVIDIA GPU (CUDA, experimental)",
+            Tag = LocalVoiceProcessor.NvidiaGpu,
+            ToolTip = $"Downloads the {LocalVoiceModels.CudaRuntime.SizeText} CUDA runtime once and needs NVIDIA's CUDA 12 and cuDNN 9 installed. Checked in a separate process on the next start; falls back to the CPU if it doesn't work.",
+        });
+        _localProcessor.SelectionChanged += (_, _) =>
+        {
+            if (_localProcessor.SelectedItem is ComboBoxItem { Tag: LocalVoiceProcessor processor })
+            {
+                Save(s => s with { LocalProcessor = processor });
+            }
+        };
+        _localThreads.SelectionChanged += (_, _) =>
+        {
+            if (_localThreads.SelectedItem is ComboBoxItem { Tag: int threads })
+            {
+                Save(s => s with { LocalThreads = threads });
+            }
+        };
         _localVoice.SelectionChanged += (_, _) =>
         {
             if (_localVoice.SelectedItem is ComboBoxItem { Tag: string id })
@@ -164,6 +191,9 @@ internal sealed class SpeechSettingsView : ContentControl
         panel.Children.Add(_local);
         panel.Children.Add(_localVoice);
         panel.Children.Add(_localStatus);
+        panel.Children.Add(Row(new TextBlock { Text = "Runs on", Width = 90, VerticalAlignment = VerticalAlignment.Center }, _localProcessor));
+        panel.Children.Add(Row(new TextBlock { Text = "CPU threads", Width = 90, VerticalAlignment = VerticalAlignment.Center }, _localThreads));
+        panel.Children.Add(_localRunsOn);
         panel.Children.Add(_cloud);
         panel.Children.Add(_cloudVoice);
 
@@ -220,6 +250,8 @@ internal sealed class SpeechSettingsView : ContentControl
             _cloud.IsChecked = speech.Engine == VoiceOutputEngine.Cloud;
             _local.IsChecked = speech.Engine == VoiceOutputEngine.Local;
             _localVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Local;
+            _localProcessor.IsEnabled = speech.Engine == VoiceOutputEngine.Local;
+            _localThreads.IsEnabled = speech.Engine == VoiceOutputEngine.Local;
             _windowsVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Windows;
             _cloudVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Cloud;
             _cloudVoice.SelectedItem = CloudVoices.Contains(speech.CloudVoice) ? speech.CloudVoice : null;
@@ -284,11 +316,29 @@ internal sealed class SpeechSettingsView : ContentControl
         }
 
         _localVoice.SelectedItem = _localVoice.Items.Cast<ComboBoxItem>().First(i => string.Equals((string)i.Tag, selected, StringComparison.OrdinalIgnoreCase));
+        _localProcessor.SelectedItem = _localProcessor.Items.Cast<ComboBoxItem>().First(i => (LocalVoiceProcessor)i.Tag == speech.LocalProcessor);
+
+        _localThreads.Items.Clear();
+        _localThreads.Items.Add(new ComboBoxItem { Content = $"Auto ({LocalTextToSpeech.ThreadsFor(0, _cpu.PerformanceCores)}, one per performance core)", Tag = 0 });
+        for (var n = 1; n <= Math.Max(Environment.ProcessorCount, speech.LocalThreads) && n <= SpeechSettings.MaxLocalThreads; n++)
+        {
+            _localThreads.Items.Add(new ComboBoxItem { Content = n.ToString(System.Globalization.CultureInfo.CurrentCulture), Tag = n });
+        }
+
+        _localThreads.SelectedItem = _localThreads.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (int)i.Tag == speech.LocalThreads) ?? _localThreads.Items[0];
         ShowLocalStatus(speech, _localTts.Download);
     }
 
     private void ShowLocalStatus(SpeechSettings speech, LocalVoiceDownloadProgress? download)
     {
+        _localRunsOn.Text = download is { } gpu && gpu.Model == LocalVoiceModels.CudaRuntime
+            ? $"Downloading the GPU runtime: {gpu.Fraction:P0} of {gpu.Model.SizeText}{(gpu.Unpacking ? ", unpacking" : string.Empty)}…"
+            : $"Now: {_localTts.Processor}.{(speech.LocalProcessor == LocalVoiceProcessor.NvidiaGpu && !_localTts.OnGpu ? " A change of processor applies when Clicky restarts." : string.Empty)}";
+        if (download is { } d0 && d0.Model == LocalVoiceModels.CudaRuntime)
+        {
+            download = null;
+        }
+
         var model = LocalVoiceModels.Find(speech.LocalModel);
         _localStatus.Text = (speech.LocalModelPath, download, model) switch
         {

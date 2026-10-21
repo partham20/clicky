@@ -41,6 +41,7 @@ using Clicky.Platform.Windows.Display;
 using Clicky.Platform.Windows.Documents;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
+using Clicky.Platform.Windows.Power;
 using Clicky.Platform.Windows.Security;
 using Clicky.Platform.Windows.Shell;
 using Clicky.Platform.Windows.SingleInstance;
@@ -116,6 +117,8 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<HttpClient>(),
             paths.VoiceModelsDirectory,
             sp.GetRequiredService<ILogger<LocalVoiceDownloader>>()));
+        services.AddSingleton<ICpuPerformance, WindowsCpuPerformance>();
+        services.AddSingleton<ILocalVoiceGpuProbe, LocalVoiceGpuProbe>();
         services.AddSingleton<LocalTextToSpeech>();
         services.AddSingleton<Func<VoiceOutputEngine, ITextToSpeech>>(sp => engine => engine switch
         {

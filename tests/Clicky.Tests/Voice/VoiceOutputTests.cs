@@ -218,7 +218,8 @@ public sealed class VoiceOutputTests
 
         await output.Speak("Hi.").Completion.WaitAsync(Timeout);
 
-        Assert.Equal([VoiceOutputEngine.Local], asked);
+        Assert.NotEmpty(asked);
+        Assert.All(asked, e => Assert.Equal(VoiceOutputEngine.Local, e));
         Assert.Equal(new SpeechRequest("bf_emma", 1.0), _tts.LastRequest);
     }
 
@@ -263,6 +264,50 @@ public sealed class VoiceOutputTests
         Assert.Equal(2, _speaker.Opened);
     }
 
+    [Fact]
+    public async Task An_engine_that_prefers_short_chunks_starts_with_a_short_one()
+    {
+        using var output = Output();
+        _tts.PrefersShortChunks = true;
+        _tts.ClipSamples = 1600;
+        var started = new ConcurrentQueue<string>();
+
+        var reply = output.Begin();
+        reply.SentenceStarted += started.Enqueue;
+        reply.Append("Sure, I can open the voice settings for you right now. Done.");
+        reply.Complete();
+        var result = await reply.Completion.WaitAsync(Timeout);
+
+        Assert.Equal(ReplyOutcome.Spoken, result.Outcome);
+        Assert.Equal(["Sure,", "I can open the voice settings for you right now.", "Done."], _tts.Texts);
+        Assert.Equal(_tts.Texts, started);
+        Assert.Equal(2, result.Sentences);
+
+        // Three 0.1 s clips; a short pause inside the sentence, the full gap between sentences.
+        var gaps = (int)Math.Round((VoiceOutput.ClauseGap + VoiceOutput.SentenceGap).TotalSeconds * FakeSpeaker.Rate);
+        Assert.InRange(_speaker.Last!.Buffer.Written, (3 * 4800) + gaps - 8, (3 * 4800) + gaps + 8);
+    }
+
+    [Fact]
+    public async Task Other_engines_get_whole_sentences()
+    {
+        using var output = Output();
+
+        await output.Speak("Sure, I can open the voice settings for you right now.").Completion.WaitAsync(Timeout);
+
+        Assert.Equal(["Sure, I can open the voice settings for you right now."], _tts.Texts);
+    }
+
+    [Fact]
+    public async Task Preparing_also_warms_the_engine()
+    {
+        using var output = Output();
+
+        output.Prepare();
+
+        await WaitUntil(() => _tts.Prepared == 1);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + Timeout;
@@ -289,6 +334,10 @@ public sealed class VoiceOutputTests
         public int ClipSamples { get; set; } = 800;
 
         public int FailOn { get; set; }
+
+        public bool PrefersShortChunks { get; set; }
+
+        public int Prepared { get; private set; }
 
         public SpeechRequest LastRequest { get; private set; }
 
@@ -317,6 +366,8 @@ public sealed class VoiceOutputTests
         }
 
         public Task WarmUpAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void Prepare() => Prepared++;
     }
 
     private sealed class FakeSpeaker : ISpeaker
