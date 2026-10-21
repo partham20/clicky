@@ -290,6 +290,26 @@ public sealed class WalkthroughEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task A_question_whose_reply_never_finishes_holds_the_walkthrough_only_so_long()
+    {
+        await StartAsync();
+        var turn = await DoStepAsync();
+
+        _presence.SetState(BuddyState.Listening);
+        await UntilAsync(() => turn.Token.IsCancellationRequested && _engine.Current?.Phase == WalkthroughPhase.Settling);
+        _presence.SetState(BuddyState.Thinking);
+        _engine.Observe(new ReplyStarted(ClaudeBackendKind.Api, "m", ModelTier.Fast, "x"), Shot); // cut off: no ReplyCompleted
+
+        _time.Advance(TimeSpan.FromSeconds(10));
+        await SettleThreadsAsync();
+        Assert.Single(_turns.All);
+
+        _time.Advance(new WalkthroughOptions().UserBusyTimeout);
+        var again = await NextTurnAsync(expected: 2);
+        Assert.Equal(turn.Turn.Prompt, again.Turn.Prompt);
+    }
+
+    [Fact]
     public async Task A_failed_request_can_be_retried()
     {
         await StartAsync();

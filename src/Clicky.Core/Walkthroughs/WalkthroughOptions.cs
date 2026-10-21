@@ -39,6 +39,12 @@ public sealed record WalkthroughOptions
     /// </summary>
     public TimeSpan AfterQuestion { get; init; } = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>
+    /// The longest a question in between holds the walkthrough up, in case its reply never finishes
+    /// (cut off) or the buddy never goes quiet.
+    /// </summary>
+    public TimeSpan UserBusyTimeout { get; init; } = TimeSpan.FromSeconds(45);
+
     /// <summary>Longest settle, however busy the user is.</summary>
     public TimeSpan MaxSettle { get; init; } = TimeSpan.FromSeconds(2.5);
 

@@ -40,7 +40,9 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
     // Loop only.
     private Session? _session;
     private ReplyTrack? _userReply;
+    private long _userReplySince;
     private bool _userTalking;
+    private long _userTalkingSince;
     private int _nextTurnId;
 
     private WalkthroughSnapshot? _current;
@@ -184,6 +186,7 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
             if (replyEvent is ReplyStarted)
             {
                 _userReply = new ReplyTrack(ours: false);
+                _userReplySince = _time.GetTimestamp();
             }
 
             track = _userReply ??= new ReplyTrack(ours: false);
@@ -246,7 +249,7 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
 
         // The user asked something in between and got an answer without a step: the walkthrough goes on,
         // now if the answer was shown rather than spoken, else once it has been said (OnUserQuiet).
-        if (session is { Pending: not null, Phase: WalkthroughPhase.Settling, Settle: null, Turn: null } && !_userTalking)
+        if (session is { Deferred: true, Turn: null } && !UserTalking)
         {
             StartSettle(session);
         }
@@ -304,6 +307,7 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
 
         session.Strays = 0;
         session.Pending = null;
+        session.Deferred = false;
         session.Problem = null;
         session.Phase = WalkthroughPhase.Waiting;
         session.Marker = _renderer.Show(step, geometry, new AnnotationOptions(Hold: Timeout.InfiniteTimeSpan));
@@ -475,6 +479,7 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         var previous = session.Steps[^1];
         previous.Status = WalkthroughStepStatus.Current;
         session.Pending = null;
+        session.Deferred = false;
         session.Problem = null;
         session.Strays = 0;
         session.Phase = WalkthroughPhase.Waiting;
@@ -542,15 +547,14 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         }
 
         CancelSettle(session);
-        if (_userReply is not null || _userTalking)
+        if (UserTalking || UserReplyInFlight)
         {
-            // The user is asking, or being answered: go on once that's over (OnUserQuiet, OnReplyCompleted).
-            session.Phase = WalkthroughPhase.Settling;
-            Publish(session);
+            Defer(session);
             return;
         }
 
         CancelTurn(session);
+        session.Deferred = false;
         session.Pending = null;
         session.Problem = null;
         session.Phase = WalkthroughPhase.Thinking;
@@ -611,8 +615,7 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
             // The user started talking: ask again once they're done.
             _logger.LogInformation("Walkthrough {Id}: request cancelled; asking again after the user's question", session.Id);
             session.Pending = turn;
-            session.Phase = WalkthroughPhase.Settling;
-            Publish(session);
+            Defer(session);
         }
         else if (failure is not null)
         {
@@ -629,9 +632,29 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         }
     }
 
+    // A reply the talk loop never finished (cancelled by barge-in, say) or a buddy that never went back
+    // to Idle must not hold the walkthrough forever.
+    private bool UserTalking => _userTalking && _time.GetElapsedTime(_userTalkingSince) < _options.UserBusyTimeout;
+
+    private bool UserReplyInFlight => _userReply is not null && _time.GetElapsedTime(_userReplySince) < _options.UserBusyTimeout;
+
+    /// <summary>
+    /// Holds the pending request until the user's question is over (OnUserQuiet, OnReplyCompleted), with
+    /// a long settle as the fallback.
+    /// </summary>
+    private void Defer(Session session)
+    {
+        session.Deferred = true;
+        StartSettle(session, _options.UserBusyTimeout);
+    }
+
     private void OnUserTalking()
     {
         _userTalking = true;
+        _userTalkingSince = _time.GetTimestamp();
+
+        // A new question supersedes whatever reply was still streaming.
+        _userReply = null;
         if (_session is not { } session)
         {
             return;
@@ -641,16 +664,17 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         {
             turn.Cancel();
         }
-
-        // A settle in progress waits for the user's question to be answered.
-        CancelSettle(session);
+        else if (session is { Settle: not null, Pending: not null, Deferred: false })
+        {
+            Defer(session);
+        }
     }
 
     private void OnUserQuiet()
     {
         var wasTalking = _userTalking;
         _userTalking = false;
-        if (wasTalking && _session is { Phase: WalkthroughPhase.Settling, Pending: not null, Settle: null, Turn: null } session && _userReply is null)
+        if (wasTalking && _session is { Deferred: true, Turn: null } session && !UserReplyInFlight)
         {
             // Pressed Talk and said nothing, or the answer has been spoken. Leave a moment for a question
             // that is still being transcribed to start its reply (which defers us again).
@@ -790,6 +814,9 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         public int ReplanIndex { get; set; }
 
         public bool LimitHit { get; set; }
+
+        /// <summary>Waiting for the user's question to be over before asking for the next step.</summary>
+        public bool Deferred { get; set; }
 
         public ITimer? Idle { get; set; }
 
