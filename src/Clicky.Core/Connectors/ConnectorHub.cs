@@ -33,6 +33,11 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
     private ConnectorSettings _applied = new();
     private ToolIndex _index = ToolIndex.Empty;
     private TaskCompletionSource _changed = NewSignal();
+
+    // Published together with _index, so GetToolsAsync never sees "settled" from live statuses
+    // before the index holds the tools of a connection that just connected.
+    private bool _pending;
+    private bool _starting;
     private bool _started;
     private bool _disposed;
 
@@ -93,9 +98,9 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
             Task signal;
             lock (_gate)
             {
-                if (!_connections.Values.Any(c => c.Status.IsPending))
+                if (!_pending)
                 {
-                    return Tools;
+                    return _index.Tools;
                 }
 
                 signal = _changed.Task;
@@ -447,16 +452,32 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
                 }
 
                 _applied = settings;
+                if (toStart.Count > 0)
+                {
+                    // New connections sit at Off until StartAsync, so count them as pending meanwhile.
+                    _starting = true;
+                    _pending = true;
+                }
             }
 
-            await Task.WhenAll(toStop.Select(c => c.DisposeAsync().AsTask())).ConfigureAwait(false);
-            await Task.WhenAll(toStart.Select(s => s.Connection.StartAsync(s.Config, s.Account))).ConfigureAwait(false);
-            if (toStop.Count + toStart.Count > 0)
+            try
             {
-                _logger.LogInformation("Connectors: {Started} (re)started, {Stopped} stopped", toStart.Count, toStop.Count);
+                await Task.WhenAll(toStop.Select(c => c.DisposeAsync().AsTask())).ConfigureAwait(false);
+                await Task.WhenAll(toStart.Select(s => s.Connection.StartAsync(s.Config, s.Account))).ConfigureAwait(false);
+                if (toStop.Count + toStart.Count > 0)
+                {
+                    _logger.LogInformation("Connectors: {Started} (re)started, {Stopped} stopped", toStart.Count, toStop.Count);
+                }
             }
+            finally
+            {
+                lock (_gate)
+                {
+                    _starting = false;
+                }
 
-            Republish();
+                Republish();
+            }
         }
         finally
         {
@@ -479,6 +500,7 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
                 Volatile.Write(ref _index, index);
             }
 
+            _pending = _starting || _connections.Values.Any(c => c.Status.IsPending);
             signal = _changed;
             _changed = NewSignal();
         }
