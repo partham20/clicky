@@ -728,6 +728,11 @@ public sealed class RoutineEngine : IAsyncDisposable
             return (RoutineRunStatus.Succeeded, OneLine(result.Summary) ?? "Done.", false);
         }
 
+        if (result is { Cancelled: true })
+        {
+            return (RoutineRunStatus.Cancelled, OneLine(result.Summary) ?? "Stopped.", false);
+        }
+
         if (result is not null)
         {
             return (RoutineRunStatus.Failed, OneLine(result.Summary) ?? "The Clicky couldn't finish it.", false);

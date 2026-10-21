@@ -320,6 +320,20 @@ public class RoutineEngineTests
     }
 
     [Fact]
+    public async Task A_run_stopped_where_it_ran_is_recorded_as_stopped()
+    {
+        await using var h = new EngineHarness(Monday7);
+        h.Runner.Handler = (_, _) => Task.FromResult(RoutineRunResult.Stopped());
+        await h.StartAsync();
+        var routine = await h.Engine.CreateAsync(Briefing());
+
+        await h.AdvanceAsync(TimeSpan.FromHours(1));
+        await EngineHarness.WaitUntil(() => h.Get(routine.Id).LastStatus == RoutineRunStatus.Cancelled, "the stopped run");
+        Assert.Equal(0, h.Get(routine.Id).ConsecutiveFailures);
+        Assert.Equal(Utc(2026, 1, 6, 8, 0), h.Get(routine.Id).NextDueAt);
+    }
+
+    [Fact]
     public async Task A_run_that_takes_too_long_is_stopped_and_counts_as_a_failure()
     {
         await using var h = new EngineHarness(Monday7, new RoutineSettings(RunTimeoutMinutes: 5));

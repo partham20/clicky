@@ -1,5 +1,6 @@
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Clickys;
 using Clicky.Core.Routines;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
@@ -18,8 +19,12 @@ internal static class RoutineServices
         services.AddSingleton<WindowsSystemSignals>();
         services.AddSingleton<ISystemSignals>(sp => sp.GetRequiredService<WindowsSystemSignals>());
 
-        // Until M14's Clickys replace it: Claude in a conversation of its own, result kept in the history.
-        services.AddSingleton<IClickyRunner, AssistantClickyRunner>();
+        // Results go to the Clicky's chat (M14); routines with no Clicky get Claude in a conversation of
+        // their own, with the answer kept in the routine's history.
+        services.AddSingleton<AssistantClickyRunner>();
+        services.AddSingleton<IClickyRunner>(sp => new ClickyServiceRunner(
+            sp.GetRequiredService<ClickyService>(),
+            sp.GetRequiredService<AssistantClickyRunner>()));
         services.AddSingleton(sp => new RoutineEngine(
             sp.GetRequiredService<RoutineStore>(),
             sp.GetRequiredService<IClickyRunner>(),

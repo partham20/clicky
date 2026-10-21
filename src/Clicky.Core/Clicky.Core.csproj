@@ -11,6 +11,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="ModelContextProtocol.Core" />
+    <PackageReference Include="Markdig" />
   </ItemGroup>
 
   <ItemGroup>

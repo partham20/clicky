@@ -37,9 +37,12 @@ public sealed record RoutineRunRequest(
 
 /// <param name="Summary">One line for the routine list, e.g. the first line of the reply or what went wrong.</param>
 /// <param name="Output">The full result, if the runner has no chat to put it in (kept in the run history).</param>
-public sealed record RoutineRunResult(bool Succeeded, string? Summary = null, string? Output = null)
+/// <param name="Cancelled">The user stopped it where it ran (e.g. Stop in Home): recorded as stopped, not a failure.</param>
+public sealed record RoutineRunResult(bool Succeeded, string? Summary = null, string? Output = null, bool Cancelled = false)
 {
     public static RoutineRunResult Success(string? summary = null, string? output = null) => new(true, summary, output);
 
     public static RoutineRunResult Failure(string summary) => new(false, summary);
+
+    public static RoutineRunResult Stopped(string? summary = null) => new(false, summary, Cancelled: true);
 }

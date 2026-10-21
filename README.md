@@ -7,7 +7,7 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, and later the agent loop. No Windows APIs |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, Clickys (SQLite), and later the agent loop. No Windows APIs |
 | `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
@@ -46,6 +46,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `updates`: `autoCheck` (true), `autoDownload` (true), `feedUrl` (empty means GitHub releases of this repository; another GitHub repo URL, an https URL or a local folder with `releases.win.json` also work), `prerelease` (false). Also in Settings > Updates and support.
 - `bug-reports\clicky-bug-*.zip`: made by Report a bug; the newest 5 are kept.
 - `dictation`: `maxMinutes` (30), `typeWhileSpeaking` (true, hands-free), `spokenCommands` (true), `learnCorrections` (true), `keepHistoryDays` (30), `cleanup` (`Auto`, `Always`, `Off`), `terminalApps`, `pasteApps`. Also in Settings › Dictation. `dictionary.json` is the personal dictionary and `dictation\` the transcript history (see Dictation below).
+- `clickys.db` (SQLite) holds your Clickys, their chats, runs and activity; `clickys\<id>\` is each Clicky's files folder (see Clickys and Home below). WebView2's cache for Home's preview is in `%LocalAppData%\Clicky\webview2`.
 - `routines.db` (SQLite): routines and their last 50 runs each (see Routines below). `routines`: `enabled` (true), `catchUpHours` (12), `holdDuringCalls` (true), `maxConcurrentRuns` (1, up to 3), `runTimeoutMinutes` (30), `notifyWhenPaused` (true). Also in Settings › Routines.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
@@ -227,6 +228,20 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 
 **Separate instances.** A copy started with `CLICKY_DATA_DIR` set is its own single instance, so a test or dev build can run beside the installed one. Both still share the one `Clicky` Run entry.
 
+## Clickys and Home (M14)
+
+Home (Ctrl+Alt+A, the tray menu, or launching Clicky again) has the docked buddy and your Clickys on the left, the selected Clicky's chat in the middle, and Preview, Activity and History on the right.
+
+- A Clicky is a persistent helper: a name, a colour, instructions sent with every task, notes it keeps in mind, and a files folder (`Files`, or drop files on the chat). Small text files in the folder (16 KB each, 48 KB in all) go with every task; the rest are listed by name. Templates in New Clicky give a starting point.
+- Writing in its chat starts a run. Each run gets the Clicky's instructions, notes, files, what Clicky remembers about you (M11) and the last 20 exchanges of its chat, and goes to the deep model on the active backend. Replies are written to be read, in Markdown, not spoken. One run per Clicky at a time (later ones queue), and only one run at a time may use the computer.
+- Runs can be paused (they hold at the next step boundary), resumed and stopped from the bar above the composer. A stopped run keeps what it said so far. A run cut off by quitting Clicky shows as Interrupted; History's `Ask again` reruns any finished task.
+- A reply lands in the chat as unread (badge in the list) and, if you're not looking at that Clicky, as a Windows notification. Nothing is spoken.
+- Preview renders the selected reply's Markdown in WebView2, or the HTML document it contains (a reply with an ```` ```html ```` block). Previews run with scripts off, a Content-Security-Policy, and every network request refused; links open in your browser. Without the WebView2 Runtime the preview falls back to plain text. `Save to files` writes the reply (`.md`, or `.html` for a document) into the Clicky's folder.
+- Activity is the run's step log (requests, what it said, actions, refusals, pauses); History lists runs with status, trigger, duration, steps, tokens and cost.
+- `Can see the screen and use the computer` lets a Clicky's runs take a screenshot and act through the computer-use agent (M13). Unattended runs never get a countdown or card: actions needing permission are refused unless a permission prompter is wired in. Until M13 is wired, every Clicky chats and uses connectors only.
+- Schema changes run as numbered migrations (`PRAGMA user_version`); an existing database is copied to `clickys.db.v<N>.bak` before an upgrade, a damaged one is moved to `clickys.db.corrupt-<time>` and a fresh one started, and one written by a newer Clicky is left untouched with an error in Home.
+- For code: `ClickyService` (in `Clicky.Core.Clickys`) is the API. `CreateAsync`, `UpdateAsync`, `DeleteAsync`, `ListAsync`; `SendAsync(clickyId, text)` for chat; `RunAsync(clickyId, ClickyRunRequest, ct)` runs a task and waits for its `ClickyRunOutcome` (routines use this; it throws `ClaudeBackendException` on backend failure); `Pause`, `Resume`, `Cancel`, `RetryAsync`; `Changed` and `RunFinished` events. Computer use plugs in as an `IClickyActor`.
+
 ## Routines (M15)
 
 "Do this every morning" makes a routine: a prompt a Clicky runs on a schedule while Clicky is open. Ask for one in conversation (the `create_routine` / `list_routines` / `pause_routine` / `run_routine_now` / `delete_routine` tools in `RoutineTools`, for chat and agent loops to offer), or add it in Settings › Routines, which also has Run now, Pause, History and Delete.
@@ -235,4 +250,4 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 - **One timer.** `RoutineEngine` arms a single timer for the next due run, capped at 15 minutes, and otherwise waits on the network, sleep and clock events; nothing polls. The cap matters: .NET timers don't count time asleep, so a timer that comes back overdue is taken as a wake-up even when Windows' wake notice never arrives (Modern Standby).
 - **Missed runs.** Runs missed while the PC slept, was off or Clicky was closed are caught up **once** (the latest one) if it was due within `catchUpHours`; older ones are recorded as skipped. A due run waits for the network (Windows' own connectivity check, with domain networks counted as online because corporate proxies often block its probe), 30 s after waking for Wi-Fi and VPN to come back, the end of a call, screen share or presentation (`holdDuringCalls`; Focus Assist alone doesn't hold anything since nothing is spoken), and a free slot (`maxConcurrentRuns`). An accepted run survives a restart.
 - **Failures.** Three failed runs in a row pause the routine with the reason shown in the list and a Windows notification. A run cut short by sleep, Clicky quitting, or losing the network is retried rather than counted; one that runs past `runTimeoutMinutes` is stopped and counts.
-- **Results** land in the Clicky's chat with an unread badge and are never spoken (M14's `IClickyRunner`). Until Clickys exist, `AssistantClickyRunner` asks Claude in a conversation of its own (never the Talk conversation, never recorded to memory) and the answer is kept in the routine's History.
+- **Results** land in the Clicky's chat with an unread badge and are never spoken (`ClickyServiceRunner` over M14's `ClickyService.RunAsync`). A routine with no Clicky chosen (e.g. made by Talk) is answered by `AssistantClickyRunner`: Claude in a conversation of its own (never the Talk conversation, never recorded to memory), with the answer kept in the routine's History. A routine whose Clicky was deleted fails with that reason and pauses after three tries.

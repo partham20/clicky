@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Clicky.App.Buddy;
 using Clicky.App.Views;
+using Clicky.App.Views.Home;
 using Clicky.Core;
 using Clicky.Core.Updates;
 using Microsoft.Extensions.Hosting;
@@ -28,7 +29,7 @@ public interface IAppShell
 internal sealed class AppShell(
     ClickyPaths paths,
     IHostApplicationLifetime lifetime,
-    Func<DockedBuddyView> dockedBuddy,
+    Func<HomeWindow> homeWindow,
     Func<HotkeysSettingsView> hotkeysView,
     Func<VoiceSettingsView> voiceView,
     Func<SpeechSettingsView> speechView,
@@ -41,12 +42,34 @@ internal sealed class AppShell(
     Func<BugReportWindow> bugReport,
     UpdateService updates) : IAppShell
 {
-    private PlaceholderWindow? _home;
+    private HomeWindow? _home;
     private PlaceholderWindow? _settings;
     private BugReportWindow? _bugReport;
+    private Window? _routines;
 
     public void ShowHome() =>
-        _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14.", extra: dockedBuddy()));
+        _home = Activate(_home, () =>
+        {
+            var home = homeWindow();
+            home.OpenSettings = ShowSettings;
+            home.OpenRoutines = ShowRoutines;
+            return home;
+        });
+
+    /// <summary>Routines on their own, from Home's sidebar.</summary>
+    public void ShowRoutines() =>
+        _routines = Activate(_routines, () => new Window
+        {
+            Title = "Routines",
+            Width = 640,
+            Height = 720,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            Content = new ScrollViewer
+            {
+                Content = new Border { Padding = new Thickness(16, 0, 16, 16), Child = routinesView() },
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+        });
 
     public void ShowSettings() =>
         _settings = Activate(_settings, () => new PlaceholderWindow(
