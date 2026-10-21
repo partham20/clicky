@@ -1,15 +1,94 @@
 namespace Clicky.Core.Geometry;
 
 /// <summary>
-/// Maps between physical screen pixels and the DIP space of a per-monitor overlay, whose origin is
-/// the monitor's top-left and where 1 DIP = <see cref="MonitorInfo.Scale"/> physical pixels.
+/// Maps between physical screen pixels, the DIP space of a per-monitor overlay (origin at the
+/// monitor's top-left, 1 DIP = <see cref="MonitorInfo.Scale"/> physical pixels), and the pixels of a
+/// downscaled screenshot (<see cref="ScreenshotGeometry"/>).
 /// </summary>
 /// <remarks>
-/// Every overlay covers exactly one monitor, so each conversion uses that one monitor's scale. The
-/// screenshot-pixel leg (capture downscale) is added in M2.
+/// Every overlay covers exactly one monitor, so each DIP conversion uses that one monitor's scale.
+/// Screenshot conversions use the capture's own scale, which is unrelated to the DPI setting.
 /// </remarks>
 public static class CoordinateMapper
 {
+    /// <summary>
+    /// Where the centre of physical pixel <paramref name="point"/> lands in the screenshot, in
+    /// screenshot pixels with integers at pixel centres. Points outside the source extrapolate.
+    /// </summary>
+    public static ScreenshotPoint ToScreenshot(PixelPoint point, ScreenshotGeometry geometry)
+    {
+        ArgumentNullException.ThrowIfNull(geometry);
+        return new ScreenshotPoint(
+            ((point.X - geometry.Source.Left + 0.5) * geometry.ScaleX) - 0.5,
+            ((point.Y - geometry.Source.Top + 0.5) * geometry.ScaleY) - 0.5);
+    }
+
+    /// <summary>
+    /// The physical pixel under a screenshot position, clamped to the captured area. For an integer
+    /// screenshot pixel that is the physical pixel at the centre of the region it was downscaled
+    /// from. For any physical pixel p in the source, <c>ToPhysical(ToScreenshot(p, g), g) == p</c>.
+    /// </summary>
+    public static PixelPoint ToPhysical(ScreenshotPoint point, ScreenshotGeometry geometry)
+    {
+        ArgumentNullException.ThrowIfNull(geometry);
+        var source = geometry.Source;
+        return new PixelPoint(
+            source.Left + ToPhysicalOffset(point.X, geometry.ScaleX, source.Width),
+            source.Top + ToPhysicalOffset(point.Y, geometry.ScaleY, source.Height));
+    }
+
+    /// <summary>
+    /// The largest size with the same aspect ratio that fits both caps (long edge and total pixels).
+    /// Never upscales, never returns less than 1x1.
+    /// </summary>
+    public static (int Width, int Height) DownscaleSize(int width, int height, int maxLongEdge, int maxPixels)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLongEdge);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPixels);
+
+        var scale = Math.Min(1.0, (double)maxLongEdge / Math.Max(width, height));
+        scale = Math.Min(scale, Math.Sqrt((double)maxPixels / ((double)width * height)));
+        if (scale >= 1.0)
+        {
+            return (width, height);
+        }
+
+        var w = Math.Clamp((int)Math.Floor(width * scale), 1, width);
+        var h = Math.Clamp((int)Math.Floor(height * scale), 1, height);
+
+        // Floating-point slack can leave the product a hair over the cap; shave the longer side.
+        while ((long)w * h > maxPixels && (w > 1 || h > 1))
+        {
+            if (w >= h)
+            {
+                w--;
+            }
+            else
+            {
+                h--;
+            }
+        }
+
+        return (w, h);
+    }
+
+    // Measured from the source edge, screenshot pixel u covers physical [u / s, (u + 1) / s), whose
+    // centre is (u + 0.5) / s; we return the physical pixel containing that position. For
+    // u = (p + 0.5) * s - 0.5 it is p + 0.5 (give or take a few ulps), half a pixel from either
+    // rounding boundary, which is why the round trip is exact.
+    private static int ToPhysicalOffset(double screenshot, double scale, int extent)
+    {
+        var physical = Math.Floor((screenshot + 0.5) / scale);
+        if (double.IsNaN(physical))
+        {
+            return 0;
+        }
+
+        return (int)Math.Clamp(physical, 0, extent - 1);
+    }
+
     public static DipPoint ToMonitorDip(PixelPoint point, MonitorInfo monitor) =>
         ToMonitorDip(point.X, point.Y, monitor);
 

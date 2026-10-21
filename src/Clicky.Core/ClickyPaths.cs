@@ -24,6 +24,9 @@ public sealed class ClickyPaths
 
     public string MemoryDirectory => Path.Combine(Root, "memory");
 
+    /// <summary>Only written when settings.debug.saveCaptures is on.</summary>
+    public string DebugCapturesDirectory => Path.Combine(Root, "debug", "captures");
+
     /// <summary>%AppData%\Clicky (roaming), overridable with CLICKY_DATA_DIR for dev/test.</summary>
     public static ClickyPaths CreateDefault()
     {
