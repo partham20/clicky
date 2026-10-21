@@ -334,7 +334,7 @@ public sealed class JsonSettingsStore : ISettingsStore, IDisposable
     }
 
     private static byte[] Serialize(ClickySettings settings) =>
-        JsonSerializer.SerializeToUtf8Bytes(settings, SettingsJsonContext.Default.ClickySettings);
+        JsonSerializer.SerializeToUtf8Bytes(settings, SettingsJsonContext.ReadableClickySettings);
 
     private void PersistSync(ClickySettings settings) =>
         PersistAsync(settings, CancellationToken.None).GetAwaiter().GetResult();
