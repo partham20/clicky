@@ -1,0 +1,26 @@
+using System.Windows;
+
+namespace Clicky.App.Views;
+
+/// <summary>Stand-in for Home (M14) and Settings (M18) so the tray menu is exercisable in M0.</summary>
+public partial class PlaceholderWindow : Window
+{
+    private readonly Action? _action;
+
+    public PlaceholderWindow(string title, string body, string? actionText = null, Action? action = null)
+    {
+        InitializeComponent();
+        Title = title;
+        Heading.Text = title;
+        Body.Text = body;
+        _action = action;
+
+        if (actionText is not null && action is not null)
+        {
+            ActionButton.Content = actionText;
+            ActionButton.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OnActionClick(object sender, RoutedEventArgs e) => _action?.Invoke();
+}

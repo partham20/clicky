@@ -1,0 +1,27 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{csproj,props,targets,xml,xaml,json,yml,manifest}]
+indent_size = 2
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+dotnet_style_readonly_field = true:warning
+dotnet_sort_system_directives_first = true
+# Library code: never capture the UI context by accident.
+dotnet_diagnostic.CA2007.severity = none
+# Logging templates are fine as-is; LoggerMessage source-gen not worth it in M0.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none
+
+[tests/**.cs]
+# Test names read as sentences.
+dotnet_diagnostic.CA1707.severity = none
