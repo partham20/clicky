@@ -91,11 +91,13 @@ Copy-Item $setup.FullName $setup001
 Get-ChildItem $feed | Format-Table Name, Length -AutoSize | Out-String | Write-Host
 Assert (Test-Path (Join-Path $feed 'ClickyApp-0.0.2-delta.nupkg')) '0.0.2 has a delta package against 0.0.1'
 
-# Cloud speech-to-text: no Whisper model download or GPU warm-up on a CI runner.
+# Cloud speech-to-text: no Whisper model download or GPU warm-up on a CI runner. Onboarding done:
+# no first-run window on an unattended desktop.
 @{
-    general = @{ startWithWindows = $true }
-    voice   = @{ engine = 'Cloud' }
-    updates = @{ feedUrl = $feed }
+    general    = @{ startWithWindows = $true }
+    voice      = @{ engine = 'Cloud' }
+    updates    = @{ feedUrl = $feed }
+    onboarding = @{ completed = $true; tutorialVersion = 1 }
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $data 'settings.json')
 $env:CLICKY_DATA_DIR = $data
 

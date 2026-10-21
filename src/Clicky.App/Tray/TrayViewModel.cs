@@ -77,6 +77,9 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
     private void OpenSettings() => _shell.ShowSettings();
 
     [RelayCommand]
+    private void OpenOnboarding() => _shell.ShowOnboarding();
+
+    [RelayCommand]
     private void Quit() => _shell.Quit();
 
     /// <summary>Forgets the conversation so far (memory gets its pass over it); the next question starts fresh.</summary>
