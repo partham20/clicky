@@ -44,6 +44,10 @@ public static class PromptLibrary
             }
 
             text.Append("]\n");
+            if (shot.Ink is { } ink)
+            {
+                text.Append(ink.Describe()).Append('\n');
+            }
         }
         else
         {

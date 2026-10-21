@@ -60,7 +60,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 | Open Home | Ctrl+Alt+A | |
 | Always-on voice | Triple-tap Ctrl | Off by default |
 
-Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk transcribes what you say (M3) and, until M6 sends it to Claude, says back what it heard (M4).
+Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk sends what you say and a screenshot to Claude and speaks the answer (M6).
 
 Gesture text in settings: modifiers alone are a hold (`Ctrl+Alt`), modifiers plus a key are a press (`Ctrl+Alt+A`), and `double`/`triple` prefixes are taps (`double Ctrl`). `hold Ctrl+Space` holds a key. A modifier-only hold needs two modifiers, and a press needs a modifier unless the key is F13-F24, so a binding can't take over normal typing.
 
@@ -96,7 +96,7 @@ Hold Talk, speak, release: the buddy listens (its disc follows your voice), thin
 
 ## Voice output (M4)
 
-Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Until M6 connects Claude, Talk says back what it heard, and Settings › Speech has a Test voice button.
+Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Settings › Speech has a Test voice button.
 
 - **Streaming.** Text is cut into sentences as it streams in (`SentenceSplitter`): at ". ", "! ", "? " and line breaks, but not at "3.14", "v1.2", "docs.claude.com", "e.g.", "Dr.", initials or "1." list numbers. Markdown, links, code blocks, table pipes and emoji are stripped before speaking (`SpeakableText`). Each sentence is synthesized while the one before it plays and queued behind it with a 180 ms pause, so there are no gaps. The look-ahead stops at about two sentences, so barge-in wastes little.
 - **Windows voices** (default): WinRT `SpeechSynthesizer` with the voices installed in Windows, 15-30 ms a sentence once loaded at startup. Windows does not offer its newer natural Narrator voices to apps, so on most PCs these are the classic voices (David, Zira, Mark, Heera, Ravi, …). **Cloud**: OpenAI `gpt-4o-mini-tts`, natural voices, using the same Credential Manager key as cloud speech-to-text; it sends the reply text to OpenAI. The Claude API has no text-to-speech.
@@ -121,6 +121,18 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
 - **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
 
+## Talk end to end (M6)
+
+Hold Ctrl+Alt, ask about what's on screen, let go: the buddy listens, thinks with your question as its caption, then answers out loud as the reply streams in, pointing at, boxing or drawing on what it talks about.
+
+- **Key down** (before the hold even arms): stops Clicky if it is speaking or still answering, fades the marks from the last answer, reads memory and gets the backend ready. On the subscription backend that starts Claude Code, so its 2-3 s start-up is over by the time you finish speaking.
+- **Armed**: the mic is already open; the screenshot is taken with the pointer position you had when you pressed, and the pointer's ink trail (M9) starts recording.
+- **Release**: speech-to-text, then `TalkLoop` (Core) asks Claude with the transcript, the screenshot and where your pointer is on it. Text goes to the sentence speaker as it arrives; point, highlight, draw and step actions go to the overlays mapped through the screenshot's geometry; click, type and the other agent actions are left to the computer-use agent (M13), which takes over in the same reply when it is installed (`IComputerAgent`). The ink trail is painted onto the screenshot and described in the question when the pointer moved over it. A capture that fails or takes over 3 s doesn't stop the question; it goes without a screenshot (and without ink).
+- **Memory**: memory is part of the system prompt, fixed for the conversation so the prompt cache keeps hitting, except that feedback ("you talk too much") updates it for the very next answer. Every exchange is queued for the memory updater; when a conversation is dropped (10 idle minutes, or tray › New conversation) memory gets its pass straight away.
+- **Problems** (no API key, Claude Code missing, rate limits, network): the buddy shows the reason as its caption and a tray notification says it, at most once per 10 minutes. Whatever was said before a failure stays said.
+- **Hidden floating cursor**: with the buddy docked, what it heard, "Listening…", "Thinking…", each spoken sentence and any problem show as a subtitle at the bottom of the monitor you're on. It never takes focus or clicks and stays out of screenshots.
+- **Startup**: the capture device (D3D11) and Whisper's GPU runtime (Vulkan) start one after the other, after the UI is up, and never at the same time (`GpuInitGate`). On Optimus laptops starting both together crashed Clicky in D3D11CreateDevice about one start in six. A capture warm-up that fails for any other reason is logged and the first Talk creates what it needs.
+
 ## Point, highlight and draw (M7)
 
 `IAnnotationRenderer.Show(action, capture.Geometry)` puts a point, highlight, draw or step action on the overlays in a hand-drawn marker style: a pointer flies from the buddy (or from the previous pointer) to its spot and rings it, boxes and shapes draw themselves in with a slight wobble and overshoot, and labels pop up beside them in a handwriting font. Marks hold for 8 s (pointer), 10 s (shapes) or 60 s (steps) after drawing, then fade; `AnnotationOptions.Hold` overrides that, and `DismissAll()` clears the screen for the next question. Only one pointer shows at a time and at most 12 marks.
@@ -129,6 +141,16 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - Frames are rendered only while something flies, draws in or fades; a still mark costs nothing but a one-shot timer for its fade, and only monitors with ink on them are redrawn.
 - The overlays stay visible while any mark is up, even with the floating cursor hidden.
 - Tray › Drawing demo (preview) plays every kind of mark on the monitor under the pointer.
+
+## Ink trail: spatial context (M9)
+
+While Talk is held the user can circle, underline or rest the pointer on things. The trail is drawn on the overlays as they go (pink ink with a white edge, in the M7 marker style; each bit holds 1.6 s and then fades, and what is left fades together shortly after release), and is sent to Claude with the screenshot taken when Talk armed: painted onto a copy of the PNG, and described as gestures in the user's turn, e.g. `[While talking, the user moved their pointer to show you something; ... In order, they circled the area (412, 220) to (560, 301); then rested the pointer on (700, 140) for 1.1 s.]`. The system prompt tells the model that "this" or "here" usually means what was circled, underlined or rested on.
+
+- The talk loop calls `IInkTrailService`: `Start()` when Talk arms, `Finish()` on release (or `Cancel()`), then `AttachAsync(screenshot, trail)` before sending; it returns the screenshot with `RequestScreenshot.Ink` set, or unchanged when the pointer barely moved over it.
+- The pointer is polled at 125 Hz on its own thread (high-resolution waitable timer), not hooked: nothing is added to every mouse event, it works over elevated windows, and the low-level mouse hook stays with walkthroughs (M8).
+- Gesture reading and the painter are pure code in `Clicky.Core/Ink` (`InkAnalyzer`, `InkPainter`), in screenshot pixels: loops are found where the path crosses itself (circling twice is one circle), straight unhurried sweeps or back-and-forth along a line are underlines, rests of 400 ms or more are pauses, quick straight flicks are moves, the rest are paths. Ink off the screenshot is dropped.
+- `settings.ink`: `enabled`, `showTrail`, `drawOnScreenshot` (all on by default). With `debug.saveCaptures` on, the inked screenshot is saved next to the debug captures.
+- Tray › Ink trail test (preview) runs the same steps for 5 s without the voice and shows what Claude would be told.
 
 ## Memory (M11)
 
