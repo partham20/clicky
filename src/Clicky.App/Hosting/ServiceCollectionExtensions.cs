@@ -6,6 +6,7 @@ using Clicky.App.TextMode;
 using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
+using Clicky.App.Views.Home;
 using Clicky.App.Walkthroughs;
 using Clicky.Core;
 using Clicky.Core.Annotations;
@@ -13,6 +14,7 @@ using Clicky.Core.Assistant;
 using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Clickys;
 using Clicky.Core.Diagnostics;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
@@ -141,6 +143,18 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ConnectorHub>();
         services.AddSingleton<IConnectorTools>(sp => sp.GetRequiredService<ConnectorHub>());
 
+        // M14 Clickys: persistent helpers in clickys.db. Until M13 lands they chat and use connectors only.
+        services.AddSingleton<IClickyModel, AssistantClickyModel>();
+        services.AddSingleton<IClickyActor, ChatOnlyClickyActor>();
+        services.AddSingleton(sp => new ClickyService(
+            paths,
+            sp.GetRequiredService<IClickyModel>(),
+            sp.GetRequiredService<IClickyActor>(),
+            sp.GetRequiredService<ILogger<ClickyService>>(),
+            sp.GetRequiredService<ICaptureService>(),
+            sp.GetRequiredService<IMemoryService>()));
+        services.AddSingleton<HomeViewState>();
+
         services.AddSingleton(sp => new PersonalVocabulary(paths.DictionaryFile, sp.GetRequiredService<ILogger<PersonalVocabulary>>()));
         services.AddSingleton(sp => new DictationHistory(paths, TimeProvider.System, sp.GetRequiredService<ILogger<DictationHistory>>()));
         services.AddSingleton<IDictationPolisher, ClaudeDictationPolisher>();
@@ -240,6 +254,10 @@ internal static class ServiceCollectionExtensions
         services.AddTransient<DictationSettingsView>();
         services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
 
+        services.AddTransient<PreviewPane>();
+        services.AddTransient<HomeWindow>();
+        services.AddSingleton<Func<HomeWindow>>(sp => sp.GetRequiredService<HomeWindow>);
+
         // M10 text mode: the typed-question box, documents from files and from the app in front.
         services.AddSingleton<WindowsDocumentReader>();
         services.AddSingleton<IWindowDocumentReader>(sp => sp.GetRequiredService<WindowsDocumentReader>());
@@ -261,6 +279,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<UpdateStartup>();
         services.AddHostedService<ConnectorStartup>();
         services.AddHostedService<DictationCoordinator>();
+        services.AddHostedService<ClickyStartup>();
         services.AddHostedService<WalkthroughStartup>();
 
         return services;

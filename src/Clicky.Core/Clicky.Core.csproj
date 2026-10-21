@@ -10,6 +10,8 @@
     <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="ModelContextProtocol.Core" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Markdig" />
     <!-- M10: PDF text, pure managed. -->
     <PackageReference Include="PdfPig" />
   </ItemGroup>
