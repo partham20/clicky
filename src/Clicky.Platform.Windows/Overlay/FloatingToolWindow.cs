@@ -14,10 +14,11 @@ public static class FloatingToolWindow
 {
     /// <summary>Call from the window's SourceInitialized.</summary>
     /// <param name="clickThrough">Mouse input passes through to the window below (captions that are only read).</param>
-    public static void Apply(nint hwnd, ILogger logger, bool clickThrough = false)
+    /// <param name="activatable">The window takes focus when clicked or shown (text mode's box, which is typed into).</param>
+    public static void Apply(nint hwnd, ILogger logger, bool clickThrough = false, bool activatable = false)
     {
         ArgumentNullException.ThrowIfNull(logger);
-        var exStyle = GetWindowLongPtr(hwnd, GwlExStyle) | WsExToolWindow | WsExNoActivate;
+        var exStyle = GetWindowLongPtr(hwnd, GwlExStyle) | WsExToolWindow | (activatable ? 0 : WsExNoActivate);
         if (clickThrough)
         {
             exStyle |= WsExTransparent | WsExLayered;

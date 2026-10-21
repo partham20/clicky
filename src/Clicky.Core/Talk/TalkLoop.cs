@@ -203,7 +203,7 @@ public sealed class TalkLoop : IDisposable
 
         var conversation = _assistant.CurrentConversation(memory);
         var screenshot = await WithInkAsync(ToScreenshot(question), question.Ink, cancellationToken).ConfigureAwait(false);
-        var request = new ClaudeRequest(question.Text, question.Source, screenshot);
+        var request = new ClaudeRequest(question.Text, question.Source, screenshot, Attachments: question.Attachments);
         var answer = new Answer(beginReply, screenshot?.Geometry);
 
         try

@@ -6,7 +6,8 @@ public sealed record TextModeSettings(
     bool SpeakReplies = false,
     bool IncludeScreenshot = true,
     bool OfferWindowDocument = true,
-    int DocumentTokenBudget = TextModeSettings.DefaultDocumentTokenBudget)
+    int DocumentTokenBudget = TextModeSettings.DefaultDocumentTokenBudget,
+    bool OfferDropTarget = true)
 {
     /// <summary>About 240,000 characters: a 100-page report goes whole.</summary>
     public const int DefaultDocumentTokenBudget = 60_000;
@@ -24,6 +25,9 @@ public sealed record TextModeSettings(
 
     /// <summary>Tokens of document text one question may carry, all documents together; longer ones are cut to the relevant parts.</summary>
     public int DocumentTokenBudget { get; init; } = DocumentTokenBudget;
+
+    /// <summary>While files are dragged anywhere, show a "Drop here to ask Clicky" bubble by the pointer.</summary>
+    public bool OfferDropTarget { get; init; } = OfferDropTarget;
 
     public TextModeSettings Normalize() => this with
     {

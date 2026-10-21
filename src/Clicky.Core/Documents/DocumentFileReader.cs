@@ -334,8 +334,11 @@ public static class DocumentFileReader
         return false;
     }
 
-    /// <summary>Normalizes line endings, drops control characters, and squeezes runs of blank lines.</summary>
-    internal static string Tidy(string text)
+    /// <summary>
+    /// Normalizes line endings, drops control characters and object placeholders (U+FFFC, which
+    /// Word and web pages put in UI Automation text), and squeezes runs of blank lines.
+    /// </summary>
+    public static string Tidy(string text)
     {
         var builder = new StringBuilder(text.Length);
         var newlines = 0;
@@ -351,7 +354,7 @@ public static class DocumentFileReader
                 continue;
             }
 
-            if (char.IsControl(c) && c != '\t')
+            if ((char.IsControl(c) && c != '\t') || c == '\uFFFC')
             {
                 continue;
             }

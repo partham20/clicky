@@ -71,6 +71,18 @@ public sealed class TalkLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Typed_questions_carry_their_attachments_to_Claude()
+    {
+        _assistant.Script = (_, _, _) => Events(Completed(ReplyStop.EndTurn));
+        var document = RequestAttachment.Document("plan.pdf", "text");
+
+        await Loop.AnswerAsync(new TalkQuestion("summarize this", RequestSource.Typed, Capture, Attachments: [document]), Begin);
+
+        Assert.Equal([document], _assistant.Requests[0].Attachments);
+        Assert.Equal(RequestSource.Typed, _assistant.Requests[0].Source);
+    }
+
+    [Fact]
     public async Task Pointer_off_the_screenshot_is_left_out_and_no_capture_means_no_marks()
     {
         _assistant.Script = (_, _, _) => Events(new ReplyAction(new PointAction(1, 1)), Completed(ReplyStop.EndTurn));

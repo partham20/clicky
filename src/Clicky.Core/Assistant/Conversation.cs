@@ -173,28 +173,6 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
         }
     }
 
-<<<<<<< HEAD
-    /// <summary>Empties the oldest attachments until the rest fit; never the newest turn's. Under the lock.</summary>
-    private bool DropOldAttachments(int maxTokens)
-    {
-        var total = _turns.Sum(t => t.Attachments?.Sum(a => a.EstimatedTokens) ?? 0);
-        var changed = false;
-        for (var i = 0; i < _turns.Count - 1 && total > maxTokens; i++)
-        {
-            if (_turns[i].Attachments is not { Count: > 0 } attachments || !attachments.Any(a => a.HasContent))
-            {
-                continue;
-            }
-
-            total -= attachments.Sum(a => a.EstimatedTokens);
-            _turns[i] = _turns[i] with { Attachments = [.. attachments.Select(a => a.WithoutContent())] };
-            changed = true;
-        }
-
-        return changed;
-    }
-
-=======
     /// <summary>
     /// Replaces the memory block, e.g. right after the user said "you talk too much", so the next
     /// answer already follows it. Bumps <see cref="Generation"/> because the prefix changed. Returns
@@ -218,7 +196,26 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
 
     private static string? Normalize(string? memory) => string.IsNullOrWhiteSpace(memory) ? null : memory.Trim();
 
->>>>>>> origin/claude/project-thread-yt91jh
+    /// <summary>Empties the oldest attachments until the rest fit; never the newest turn's. Under the lock.</summary>
+    private bool DropOldAttachments(int maxTokens)
+    {
+        var total = _turns.Sum(t => t.Attachments?.Sum(a => a.EstimatedTokens) ?? 0);
+        var changed = false;
+        for (var i = 0; i < _turns.Count - 1 && total > maxTokens; i++)
+        {
+            if (_turns[i].Attachments is not { Count: > 0 } attachments || !attachments.Any(a => a.HasContent))
+            {
+                continue;
+            }
+
+            total -= attachments.Sum(a => a.EstimatedTokens);
+            _turns[i] = _turns[i] with { Attachments = [.. attachments.Select(a => a.WithoutContent())] };
+            changed = true;
+        }
+
+        return changed;
+    }
+
     /// <summary>A turn as the time provider sees now; for backends building one.</summary>
     internal DateTimeOffset Now => _time.GetUtcNow();
 }

@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Windows.Threading;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
+using Clicky.App.TextMode;
 using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
@@ -13,6 +14,7 @@ using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
+using Clicky.Core.Documents;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
@@ -23,6 +25,7 @@ using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Dictation;
+using Clicky.Platform.Windows.Documents;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
@@ -182,6 +185,13 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
         services.AddTransient<DictationSettingsView>();
         services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
+
+        // M10 text mode: the typed-question box, documents from files and from the app in front.
+        services.AddSingleton<WindowsDocumentReader>();
+        services.AddSingleton<IWindowDocumentReader>(sp => sp.GetRequiredService<WindowsDocumentReader>());
+        services.AddSingleton<IImageLoader, WicImageLoader>();
+        services.AddSingleton<TextModeController>();
+        services.AddSingleton<DropPad>();
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
