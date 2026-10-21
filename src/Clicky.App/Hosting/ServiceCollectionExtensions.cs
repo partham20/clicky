@@ -18,6 +18,7 @@ using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
+using Clicky.Core.Suggestions;
 using Clicky.Core.Talk;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
@@ -165,6 +166,19 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<ILogger<TalkLoop>>(),
             sp.GetService<IComputerAgent>()));
         services.AddSingleton<TalkAnswerer>();
+
+        // M17 suggestions: daily read-only research, the morning card, "Do it" through the Talk loop.
+        services.AddSingleton(sp => new SuggestionStore(
+            Path.Combine(paths.Root, "suggestions.json"),
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<SuggestionStore>>()));
+        services.AddSingleton<ISuggestionModel, ClaudeSuggestionModel>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<SuggestionResearcher>();
+        services.AddSingleton<SuggestionEditor>();
+        services.AddSingleton<SuggestionEngine>();
+        services.AddSingleton<SuggestionCoordinator>();
+        services.AddSingleton<ITodaysIdeas>(sp => sp.GetRequiredService<SuggestionCoordinator>());
         services.AddSingleton<HiddenBuddyCaption>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
@@ -196,6 +210,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<VoiceStartup>();
         services.AddHostedService<ConnectorStartup>();
         services.AddHostedService<DictationCoordinator>();
+        services.AddHostedService(sp => sp.GetRequiredService<SuggestionCoordinator>());
 
         return services;
     }
