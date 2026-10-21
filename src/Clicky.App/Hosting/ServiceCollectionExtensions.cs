@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Windows.Threading;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
+using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
@@ -13,6 +14,7 @@ using Clicky.Core.Capture;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
@@ -146,6 +148,11 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnnotationRenderer>();
         services.AddSingleton<IAnnotationRenderer>(sp => sp.GetRequiredService<AnnotationRenderer>());
         services.AddSingleton<AnnotationDemo>();
+
+        // M9 ink trail: the talk loop records the pointer during Talk and attaches it to the request.
+        services.AddSingleton<InkTrailService>();
+        services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
+        services.AddSingleton<InkTrailDemo>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();

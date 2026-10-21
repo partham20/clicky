@@ -130,6 +130,16 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - The overlays stay visible while any mark is up, even with the floating cursor hidden.
 - Tray › Drawing demo (preview) plays every kind of mark on the monitor under the pointer.
 
+## Ink trail: spatial context (M9)
+
+While Talk is held the user can circle, underline or rest the pointer on things. The trail is drawn on the overlays as they go (pink ink with a white edge, in the M7 marker style; each bit holds 1.6 s and then fades, and what is left fades together shortly after release), and is sent to Claude with the screenshot taken when Talk armed: painted onto a copy of the PNG, and described as gestures in the user's turn, e.g. `[While talking, the user moved their pointer to show you something; ... In order, they circled the area (412, 220) to (560, 301); then rested the pointer on (700, 140) for 1.1 s.]`. The system prompt tells the model that "this" or "here" usually means what was circled, underlined or rested on.
+
+- The talk loop calls `IInkTrailService`: `Start()` when Talk arms, `Finish()` on release (or `Cancel()`), then `AttachAsync(screenshot, trail)` before sending; it returns the screenshot with `RequestScreenshot.Ink` set, or unchanged when the pointer barely moved over it.
+- The pointer is polled at 125 Hz on its own thread (high-resolution waitable timer), not hooked: nothing is added to every mouse event, it works over elevated windows, and the low-level mouse hook stays with walkthroughs (M8).
+- Gesture reading and the painter are pure code in `Clicky.Core/Ink` (`InkAnalyzer`, `InkPainter`), in screenshot pixels: loops are found where the path crosses itself (circling twice is one circle), straight unhurried sweeps or back-and-forth along a line are underlines, rests of 400 ms or more are pauses, quick straight flicks are moves, the rest are paths. Ink off the screenshot is dropped.
+- `settings.ink`: `enabled`, `showTrail`, `drawOnScreenshot` (all on by default). With `debug.saveCaptures` on, the inked screenshot is saved next to the debug captures.
+- Tray › Ink trail test (preview) runs the same steps for 5 s without the voice and shows what Claude would be told.
+
 ## Memory (M11)
 
 Two Markdown files in `%AppData%\Clicky\memory`, both plain text you can edit in Settings › Memory or any editor:
