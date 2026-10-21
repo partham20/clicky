@@ -145,6 +145,11 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
                 }
 
                 IReadOnlyList<ConnectorTool> tools = _connectors is null ? [] : await _connectors.GetToolsAsync(s_connectorWait, stall.Token).ConfigureAwait(false);
+                if (request.Tools is { Count: > 0 } extra)
+                {
+                    tools = [.. tools, .. extra];
+                }
+
                 await session.SendUserAsync(UserContent(conversation, session, request, userText, tools), stall.Token).ConfigureAwait(false);
                 session.TurnsSeen = conversation.Turns.Count + 1;
             }

@@ -32,10 +32,13 @@ public sealed class ClickyService : IAsyncDisposable
 
     private const string InterruptedError = "Clicky closed while this was running.";
 
+    private const string ToolsAnsweredText = "Those are the results. Answer the user, or carry on with the task.";
+
     private readonly IClickyModel _model;
     private readonly IClickyActor _actor;
     private readonly ICaptureService? _capture;
     private readonly IMemoryService? _memory;
+    private readonly IClickyTools? _tools;
     private readonly ILogger<ClickyService> _logger;
     private readonly TimeProvider _time;
     private readonly Lazy<Task<ClickyStore>> _store;
@@ -51,13 +54,15 @@ public sealed class ClickyService : IAsyncDisposable
         ILogger<ClickyService> logger,
         ICaptureService? capture = null,
         IMemoryService? memory = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IClickyTools? tools = null)
     {
         ArgumentNullException.ThrowIfNull(paths);
         _model = model;
         _actor = actor;
         _capture = capture;
         _memory = memory;
+        _tools = tools;
         _logger = logger;
         _time = time ?? TimeProvider.System;
         DatabasePath = Path.Combine(paths.Root, ClickyDatabase.FileName);
@@ -403,12 +408,34 @@ public sealed class ClickyService : IAsyncDisposable
 
             var conversation = await ConversationAsync(store, clicky, acts, active.Run.Id, token).ConfigureAwait(false);
             var screenshot = acts ? await ScreenshotAsync(store, active, token).ConfigureAwait(false) : null;
-            var claudeRequest = new ClaudeRequest(ClickyPrompt.Request(request), RequestSource.Agent, screenshot);
+            var extraTools = _tools?.ToolsFor(clicky, request.Trigger);
+            var claudeRequest = new ClaudeRequest(ClickyPrompt.Request(request), RequestSource.Agent, screenshot, Tools: extraTools);
 
             await StepAsync(store, active, ClickyStepKind.Request, screenshot is not null ? "Asked Claude, with a screenshot" : "Asked Claude").ConfigureAwait(false);
             await foreach (var replyEvent in _model.ReplyAsync(conversation, claudeRequest, token).ConfigureAwait(false))
             {
                 await HandleAsync(store, active, replyEvent, reply, progress).ConfigureAwait(false);
+            }
+
+            // The Clicky's own tools (routines) are answered here, between replies, until Claude stops
+            // calling them or asks for something only the actor can do.
+            while (_tools is not null && progress.Last is { } latest && progress.Steps < clicky.MaxSteps && ToolCalls(latest) is { Count: > 0 } calls)
+            {
+                var results = new List<ToolOutcome>(calls.Count);
+                foreach (var (action, toolCallId) in calls)
+                {
+                    var outcome = await _tools.CallAsync(clicky, request.Trigger, action, toolCallId, token).ConfigureAwait(false);
+                    results.Add(outcome);
+                    await StepAsync(store, active, outcome.IsError ? ClickyStepKind.Rejected : ClickyStepKind.Action, Format($"{outcome.Name}: {outcome.Text}")).ConfigureAwait(false);
+                }
+
+                await WaitIfPausedAsync(store, active, token).ConfigureAwait(false);
+                var next = new ClaudeRequest(ToolsAnsweredText, RequestSource.Agent, Step: new AgentStep(progress.Steps, clicky.MaxSteps, results), Tools: extraTools);
+                await StepAsync(store, active, ClickyStepKind.Request, "Asked Claude, with the results").ConfigureAwait(false);
+                await foreach (var replyEvent in _model.ReplyAsync(conversation, next, token).ConfigureAwait(false))
+                {
+                    await HandleAsync(store, active, replyEvent, reply, progress).ConfigureAwait(false);
+                }
             }
 
             if (acts && progress.Last is { } first && _actor.WantsToAct(first) && progress.Steps < clicky.MaxSteps)
@@ -520,6 +547,22 @@ public sealed class ClickyService : IAsyncDisposable
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The calls in <paramref name="completed"/> that the Clicky's own tools answer, with their tool
+    /// call ids; none when the reply also wants something only the actor can do (it runs those next).
+    /// </summary>
+    private List<(ClickyAction Action, string? ToolCallId)> ToolCalls(ReplyCompleted completed)
+    {
+        if (_tools is null || completed.Actions.Any(a => a.NeedsResult && !_tools.Answers(a)))
+        {
+            return [];
+        }
+
+        return [.. completed.Actions
+            .Where(_tools.Answers)
+            .Select(a => (a, (completed.Calls.FirstOrDefault(c => ReferenceEquals(c.Action, a)) ?? completed.Calls.FirstOrDefault(c => Equals(c.Action, a)))?.Call.Id))];
     }
 
     private async Task<Conversation> ConversationAsync(ClickyStore store, ClickyAgent clicky, bool acts, string runId, CancellationToken token)

@@ -73,6 +73,10 @@ public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, 
 /// </param>
 /// <param name="Attachments">Documents and pictures to read with the question (text mode, M10); see <see cref="RequestAttachment"/>.</param>
 /// <param name="Step">For an agent step: what the previous reply's actions did.</param>
+/// <param name="Tools">
+/// Tools for this request only, offered and called like connector tools (as <see cref="Actions.UseToolAction"/>s):
+/// a Clicky's routine tools (M15). The caller runs them.
+/// </param>
 public sealed record ClaudeRequest(
     string Text,
     RequestSource Source,
@@ -80,4 +84,5 @@ public sealed record ClaudeRequest(
     ModelTier? Tier = null,
     string? Context = null,
     IReadOnlyList<RequestAttachment>? Attachments = null,
-    AgentStep? Step = null);
+    AgentStep? Step = null,
+    IReadOnlyList<Connectors.ConnectorTool>? Tools = null);

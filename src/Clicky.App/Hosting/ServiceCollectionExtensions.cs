@@ -157,7 +157,8 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<IClickyActor>(),
             sp.GetRequiredService<ILogger<ClickyService>>(),
             sp.GetRequiredService<ICaptureService>(),
-            sp.GetRequiredService<IMemoryService>()));
+            sp.GetRequiredService<IMemoryService>(),
+            tools: sp.GetService<IClickyTools>()));
         services.AddSingleton<HomeViewState>();
 
         services.AddSingleton(sp => new PersonalVocabulary(paths.DictionaryFile, sp.GetRequiredService<ILogger<PersonalVocabulary>>()));
