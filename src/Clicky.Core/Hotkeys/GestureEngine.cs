@@ -16,7 +16,8 @@ namespace Clicky.Core.Hotkeys;
 /// non-modifier key during it makes it dirty: dirty sessions never arm a hold and are never taps,
 /// which is what keeps Ctrl+C, Ctrl+Alt+Del and AltGr typing from triggering anything.</item>
 /// <item>A modifier-only hold arms after <see cref="HoldArmMs"/> with exactly its modifiers down,
-/// reached by pressing (not by releasing extras), and ends when one of them is released.</item>
+/// reached by pressing (not by releasing extras), and ends when one of them is released. It is
+/// announced as Pending the moment its modifiers are down, and Cancelled if it never arms.</item>
 /// <item>A tap is a clean session no longer than <see cref="TapMaxMs"/> that never armed a hold.
 /// Taps of the same modifiers count up while each starts within <see cref="MultiTapGapMs"/> of the
 /// previous one's release.</item>
@@ -120,7 +121,7 @@ public sealed class GestureEngine
         }
 
         _bindings = next;
-        _candidate = null;
+        DropCandidate(nowMs);
         ResetTaps();
     }
 
@@ -193,7 +194,7 @@ public sealed class GestureEngine
         _keysDown.Clear();
         _swallowed.Clear();
         _sessionActive = false;
-        _candidate = null;
+        DropCandidate(nowMs);
         MaskKeyRequested = false;
         ResetTaps();
     }
@@ -299,7 +300,7 @@ public sealed class GestureEngine
 
         if (after != before)
         {
-            _candidate = null;
+            DropCandidate(now);
             _sessionShrunk = after != HotkeyModifiers.None;
         }
 
@@ -333,7 +334,7 @@ public sealed class GestureEngine
         _swallowed.Remove(vk);
         _keysDown[vk] = now;
 
-        _candidate = null;
+        DropCandidate(now);
         if (_sessionActive)
         {
             _sessionDirty = true;
@@ -425,21 +426,44 @@ public sealed class GestureEngine
 
     private void UpdateHoldCandidate(HotkeyModifiers modifiers, long now)
     {
-        _candidate = null;
-        if (_hold is not null || !_sessionActive || _sessionDirty || _sessionShrunk)
+        HotkeyBinding? next = null;
+        if (_hold is null && _sessionActive && !_sessionDirty && !_sessionShrunk)
+        {
+            foreach (var binding in _bindings)
+            {
+                var gesture = binding.Gesture;
+                if (gesture.Kind == HotkeyGestureKind.Hold && !gesture.Chord.HasTrigger && gesture.Chord.Modifiers == modifiers)
+                {
+                    next = binding;
+                    break;
+                }
+            }
+        }
+
+        if (next is null)
+        {
+            DropCandidate(now);
+            return;
+        }
+
+        if (next == _candidate)
         {
             return;
         }
 
-        foreach (var binding in _bindings)
+        DropCandidate(now);
+        _candidate = next;
+        _armAt = now + HoldArmMs;
+        Emit(next.Action, HotkeyPhase.Pending, now);
+    }
+
+    /// <summary>A hold that was waiting to arm will not: tell whoever started work on its Pending.</summary>
+    private void DropCandidate(long now)
+    {
+        if (_candidate is { } candidate)
         {
-            var gesture = binding.Gesture;
-            if (gesture.Kind == HotkeyGestureKind.Hold && !gesture.Chord.HasTrigger && gesture.Chord.Modifiers == modifiers)
-            {
-                _candidate = binding;
-                _armAt = now + HoldArmMs;
-                return;
-            }
+            _candidate = null;
+            Emit(candidate.Action, HotkeyPhase.Cancelled, now);
         }
     }
 

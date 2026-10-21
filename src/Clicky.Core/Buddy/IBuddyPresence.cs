@@ -13,6 +13,23 @@ public interface IBuddyPresence
     event EventHandler<BuddyStateChangedEventArgs>? StateChanged;
 
     void SetState(BuddyState state);
+
+    /// <summary>Microphone level 0..1 while listening, else 0. Safe to read from any thread.</summary>
+    float Level { get; }
+
+    /// <summary>Raised on the calling thread, up to ~20 times a second while listening.</summary>
+    event EventHandler? LevelChanged;
+
+    /// <summary>Clamped to 0..1.</summary>
+    void SetLevel(float level);
+
+    /// <summary>A short line shown next to the buddy (what it heard, or why it could not), or null.</summary>
+    string? Caption { get; }
+
+    /// <summary>Raised on the calling thread when <see cref="Caption"/> changes.</summary>
+    event EventHandler? CaptionChanged;
+
+    void SetCaption(string? caption);
 }
 
 public sealed class BuddyStateChangedEventArgs(BuddyState previous, BuddyState current) : EventArgs

@@ -36,4 +36,38 @@ public sealed class BuddyPresenceTests
         Assert.Throws<ArgumentOutOfRangeException>(() => presence.SetState((BuddyState)42));
         Assert.Equal(BuddyState.Idle, presence.State);
     }
+
+    [Fact]
+    public void Level_is_clamped_and_raised_only_on_change()
+    {
+        var presence = new BuddyPresence(NullLogger<BuddyPresence>.Instance);
+        var raised = 0;
+        presence.LevelChanged += (_, _) => raised++;
+
+        presence.SetLevel(0.5f);
+        presence.SetLevel(0.5f);
+        presence.SetLevel(7f);
+        presence.SetLevel(float.NaN);
+
+        Assert.Equal(0f, presence.Level);
+        Assert.Equal(3, raised);
+        presence.SetLevel(1.5f);
+        Assert.Equal(1f, presence.Level);
+    }
+
+    [Fact]
+    public void Blank_captions_clear_and_repeats_are_ignored()
+    {
+        var presence = new BuddyPresence(NullLogger<BuddyPresence>.Instance);
+        var raised = 0;
+        presence.CaptionChanged += (_, _) => raised++;
+
+        presence.SetCaption(" Turn on dark mode ");
+        presence.SetCaption("Turn on dark mode");
+        Assert.Equal("Turn on dark mode", presence.Caption);
+
+        presence.SetCaption("   ");
+        Assert.Null(presence.Caption);
+        Assert.Equal(2, raised);
+    }
 }

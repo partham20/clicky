@@ -37,6 +37,12 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
         _icon = icon;
     }
 
+    /// <summary>A Windows notification from the tray icon. UI thread; does nothing before <see cref="Show"/>.</summary>
+    public void Notify(string title, string message, bool warning)
+    {
+        _icon?.ShowNotification(title, message, warning ? NotificationIcon.Warning : NotificationIcon.Info);
+    }
+
     public void Dispose()
     {
         _icon?.Dispose();

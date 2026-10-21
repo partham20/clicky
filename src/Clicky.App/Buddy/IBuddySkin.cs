@@ -29,6 +29,15 @@ public interface IBuddyVisual
     /// </summary>
     BuddyState State { get; set; }
 
+    /// <summary>Mic level 0..1, shown while <see cref="State"/> is Listening.</summary>
+    float Level { get; set; }
+
+    /// <summary>Text in a bubble beside the buddy, or null for none.</summary>
+    string? Caption { get; set; }
+
+    /// <summary>Puts the caption bubble on the buddy's left, for when it would run off the right edge.</summary>
+    bool CaptionOnLeft { get; set; }
+
     /// <summary>Positions the element's top-left in its parent canvas, in DIPs.</summary>
     void MoveTo(DipPoint topLeft);
 }
