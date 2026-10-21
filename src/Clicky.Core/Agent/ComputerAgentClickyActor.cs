@@ -20,7 +20,7 @@ public sealed class ComputerAgentClickyActor(ComputerAgent agent) : IClickyActor
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var run = new AgentRunOptions(MaxSteps: Math.Max(1, options.MaxSteps), Unattended: options.Unattended, PreApproved: options.Unattended);
+        var run = new AgentRunOptions(MaxSteps: Math.Max(1, options.MaxSteps), Unattended: options.Unattended, PreApproved: options.Unattended, Tools: options.Tools);
         return agent.ContinueAsync(conversation, completed, screenshot, run, cancellationToken);
     }
 }

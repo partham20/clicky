@@ -129,7 +129,10 @@ internal sealed class FakeClickyActor(params ActorStep[] steps) : IClickyActor
 
     public ReplyCompleted? First { get; private set; }
 
-    public bool WantsToAct(ReplyCompleted completed) => Wants;
+    /// <summary>Decides per reply when set, like the real actor; otherwise <see cref="Wants"/>.</summary>
+    public Func<ReplyCompleted, bool>? WantsFor { get; set; }
+
+    public bool WantsToAct(ReplyCompleted completed) => WantsFor?.Invoke(completed) ?? Wants;
 
     public async IAsyncEnumerable<ReplyEvent> ContinueAsync(
         Conversation conversation,

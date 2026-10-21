@@ -31,7 +31,8 @@ public interface IClickyActor
 /// Nobody may be watching (a routine, or Home in the background): no countdowns or cards; actions
 /// that need permission are refused unless the actor has another way to ask.
 /// </param>
-public sealed record ClickyActorOptions(int MaxSteps, bool Unattended = true);
+/// <param name="Tools">The Clicky's own tools (routines) for this run, which the actor hands back instead of running.</param>
+public sealed record ClickyActorOptions(int MaxSteps, bool Unattended = true, Agent.IRunTools? Tools = null);
 
 /// <summary>Until computer use is available: a Clicky can chat and use connectors, but never acts on the screen.</summary>
 public sealed class ChatOnlyClickyActor : IClickyActor
