@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Output goes to -OutputDir (default artifacts\releases): ClickyApp-win-Setup.exe, the full and delta
-  .nupkg files, releases.win.json and a portable zip. Put earlier releases in -OutputDir first
+  .nupkg files, releases.win.json, RELEASES and ClickyApp-win-Portable.zip. Put earlier releases in -OutputDir first
   (vpk download) to get delta packages. Used by .github/workflows/release.yml and for local tests.
 
 .EXAMPLE
@@ -13,13 +13,20 @@
 param(
     [Parameter(Mandatory)] [string] $Version,
     [string] $OutputDir,
-    [string] $Runtime = 'win-x64'
+    [string] $Runtime = 'win-x64',
+    # Markdown shown on the GitHub release and kept in the package. Default: build\release-notes\<Version>.md if present.
+    [string] $ReleaseNotes
 )
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $OutputDir = if ($OutputDir) { [IO.Path]::GetFullPath($OutputDir) } else { Join-Path $root 'artifacts\releases' }
 $publishDir = Join-Path $root "artifacts\publish\$Runtime"
+if (-not $ReleaseNotes) {
+    $candidate = Join-Path $root "build\release-notes\$Version.md"
+    if (Test-Path $candidate) { $ReleaseNotes = $candidate }
+}
+$notesArgs = if ($ReleaseNotes) { @('--releaseNotes', (Resolve-Path $ReleaseNotes).Path) } else { @() }
 
 if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
@@ -50,7 +57,8 @@ try {
         --mainExe Clicky.exe `
         --icon (Join-Path $root 'src\Clicky.App\Assets\clicky.ico') `
         --runtime $Runtime `
-        --outputDir $OutputDir
+        --outputDir $OutputDir `
+        @notesArgs
     if ($LASTEXITCODE -ne 0) { throw "vpk pack failed ($LASTEXITCODE)" }
 }
 finally {
