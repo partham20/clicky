@@ -2,7 +2,7 @@ using System.Windows;
 
 namespace Clicky.App.Views;
 
-/// <summary>Stand-in for Home (M14) and Settings (M18) so the tray menu is exercisable in M0.</summary>
+/// <summary>Stand-in for Settings until its pages land in M18.</summary>
 public partial class PlaceholderWindow : Window
 {
     private readonly Action? _action;
