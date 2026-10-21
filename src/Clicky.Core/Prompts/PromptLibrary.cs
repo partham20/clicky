@@ -54,6 +54,11 @@ public static class PromptLibrary
             text.Append("[No screenshot with this message.]\n");
         }
 
+        if (!string.IsNullOrWhiteSpace(request.Context))
+        {
+            text.Append(request.Context.Trim()).Append('\n');
+        }
+
         text.Append(request.Source switch
         {
             RequestSource.Voice => "The user said (speech-to-text): ",
