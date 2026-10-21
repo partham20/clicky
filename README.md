@@ -23,6 +23,9 @@ dotnet run --project src/Clicky.App
 
 Package versions are pinned centrally in `Directory.Packages.props`. Warnings are errors.
 
+Installer: `.uild\pack.ps1 -Version 0.2.0` publishes a self-contained win-x64 build and packs it with Velopack (`vpk`, pinned in `dotnet-tools.json`) into `artifacts
+eleases`. Releases are cut by `.github/workflows/release.yml` (see Install and updates below).
+
 ## Data
 
 Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` environment variable):
@@ -36,9 +39,12 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
 - `claude`: `backend` (`Api` or `Subscription`), `routing` (`Auto`, `AlwaysFast`, `AlwaysDeep`), `apiFastModel` (`claude-haiku-5-5`), `apiDeepModel` (`claude-opus-5-5`), `subscriptionFastModel` (`haiku`), `subscriptionDeepModel` (`opus`), `fastEffort` (`Low`), `deepEffort` (`Medium`), `maxTurns` (40), `idleResetMinutes` (10), `cliPath` (empty finds `claude.exe`). Also in Settings › Claude. The Anthropic key is in Credential Manager as `Clicky/anthropic-api-key` (or `ANTHROPIC_API_KEY` for development).
+- `skills\*.md` (and `skills\<name>\SKILL.md`): app guides sent with questions asked while that app is in front (see Walkthroughs below). The folder gets a README with the format on first run.
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
+- `updates`: `autoCheck` (true), `autoDownload` (true), `feedUrl` (empty means GitHub releases of this repository; another GitHub repo URL, an https URL or a local folder with `releases.win.json` also work), `prerelease` (false). Also in Settings > Updates and support.
+- `bug-reports\clicky-bug-*.zip`: made by Report a bug; the newest 5 are kept.
 - `dictation`: `maxMinutes` (30), `typeWhileSpeaking` (true, hands-free), `spokenCommands` (true), `learnCorrections` (true), `keepHistoryDays` (30), `cleanup` (`Auto`, `Always`, `Off`), `terminalApps`, `pasteApps`. Also in Settings › Dictation. `dictionary.json` is the personal dictionary and `dictation\` the transcript history (see Dictation below).
 - `routines.db` (SQLite): routines and their last 50 runs each (see Routines below). `routines`: `enabled` (true), `catchUpHours` (12), `holdDuringCalls` (true), `maxConcurrentRuns` (1, up to 3), `runTimeoutMinutes` (30), `notifyWhenPaused` (true). Also in Settings › Routines.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
@@ -61,7 +67,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 | Open Home | Ctrl+Alt+A | |
 | Always-on voice | Triple-tap Ctrl | Off by default |
 
-Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk transcribes what you say (M3) and, until M6 sends it to Claude, says back what it heard (M4).
+Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk sends what you say and a screenshot to Claude and speaks the answer (M6).
 
 Gesture text in settings: modifiers alone are a hold (`Ctrl+Alt`), modifiers plus a key are a press (`Ctrl+Alt+A`), and `double`/`triple` prefixes are taps (`double Ctrl`). `hold Ctrl+Space` holds a key. A modifier-only hold needs two modifiers, and a press needs a modifier unless the key is F13-F24, so a binding can't take over normal typing.
 
@@ -97,7 +103,7 @@ Hold Talk, speak, release: the buddy listens (its disc follows your voice), thin
 
 ## Voice output (M4)
 
-Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Until M6 connects Claude, Talk says back what it heard, and Settings › Speech has a Test voice button.
+Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Settings › Speech has a Test voice button.
 
 - **Streaming.** Text is cut into sentences as it streams in (`SentenceSplitter`): at ". ", "! ", "? " and line breaks, but not at "3.14", "v1.2", "docs.claude.com", "e.g.", "Dr.", initials or "1." list numbers. Markdown, links, code blocks, table pipes and emoji are stripped before speaking (`SpeakableText`). Each sentence is synthesized while the one before it plays and queued behind it with a 180 ms pause, so there are no gaps. The look-ahead stops at about two sentences, so barge-in wastes little.
 - **Windows voices** (default): WinRT `SpeechSynthesizer` with the voices installed in Windows, 15-30 ms a sentence once loaded at startup. Windows does not offer its newer natural Narrator voices to apps, so on most PCs these are the classic voices (David, Zira, Mark, Heera, Ravi, …). **Cloud**: OpenAI `gpt-4o-mini-tts`, natural voices, using the same Credential Manager key as cloud speech-to-text; it sends the reply text to OpenAI. The Claude API has no text-to-speech.
@@ -122,6 +128,18 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
 - **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
 
+## Talk end to end (M6)
+
+Hold Ctrl+Alt, ask about what's on screen, let go: the buddy listens, thinks with your question as its caption, then answers out loud as the reply streams in, pointing at, boxing or drawing on what it talks about.
+
+- **Key down** (before the hold even arms): stops Clicky if it is speaking or still answering, fades the marks from the last answer, reads memory and gets the backend ready. On the subscription backend that starts Claude Code, so its 2-3 s start-up is over by the time you finish speaking.
+- **Armed**: the mic is already open; the screenshot is taken with the pointer position you had when you pressed, and the pointer's ink trail (M9) starts recording.
+- **Release**: speech-to-text, then `TalkLoop` (Core) asks Claude with the transcript, the screenshot and where your pointer is on it. Text goes to the sentence speaker as it arrives; point, highlight, draw and step actions go to the overlays mapped through the screenshot's geometry; click, type and the other agent actions are left to the computer-use agent (M13), which takes over in the same reply when it is installed (`IComputerAgent`). The ink trail is painted onto the screenshot and described in the question when the pointer moved over it. A capture that fails or takes over 3 s doesn't stop the question; it goes without a screenshot (and without ink).
+- **Memory**: memory is part of the system prompt, fixed for the conversation so the prompt cache keeps hitting, except that feedback ("you talk too much") updates it for the very next answer. Every exchange is queued for the memory updater; when a conversation is dropped (10 idle minutes, or tray › New conversation) memory gets its pass straight away.
+- **Problems** (no API key, Claude Code missing, rate limits, network): the buddy shows the reason as its caption and a tray notification says it, at most once per 10 minutes. Whatever was said before a failure stays said.
+- **Hidden floating cursor**: with the buddy docked, what it heard, "Listening…", "Thinking…", each spoken sentence and any problem show as a subtitle at the bottom of the monitor you're on. It never takes focus or clicks and stays out of screenshots.
+- **Startup**: the capture device (D3D11) and Whisper's GPU runtime (Vulkan) start one after the other, after the UI is up, and never at the same time (`GpuInitGate`). On Optimus laptops starting both together crashed Clicky in D3D11CreateDevice about one start in six. A capture warm-up that fails for any other reason is logged and the first Talk creates what it needs.
+
 ## Point, highlight and draw (M7)
 
 `IAnnotationRenderer.Show(action, capture.Geometry)` puts a point, highlight, draw or step action on the overlays in a hand-drawn marker style: a pointer flies from the buddy (or from the previous pointer) to its spot and rings it, boxes and shapes draw themselves in with a slight wobble and overshoot, and labels pop up beside them in a handwriting font. Marks hold for 8 s (pointer), 10 s (shapes) or 60 s (steps) after drawing, then fade; `AnnotationOptions.Hold` overrides that, and `DismissAll()` clears the screen for the next question. Only one pointer shows at a time and at most 12 marks.
@@ -130,6 +148,28 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - Frames are rendered only while something flies, draws in or fades; a still mark costs nothing but a one-shot timer for its fade, and only monitors with ink on them are redrawn.
 - The overlays stay visible while any mark is up, even with the floating cursor hidden.
 - Tray › Drawing demo (preview) plays every kind of mark on the monitor under the pointer.
+
+## Ink trail: spatial context (M9)
+
+While Talk is held the user can circle, underline or rest the pointer on things. The trail is drawn on the overlays as they go (pink ink with a white edge, in the M7 marker style; each bit holds 1.6 s and then fades, and what is left fades together shortly after release), and is sent to Claude with the screenshot taken when Talk armed: painted onto a copy of the PNG, and described as gestures in the user's turn, e.g. `[While talking, the user moved their pointer to show you something; ... In order, they circled the area (412, 220) to (560, 301); then rested the pointer on (700, 140) for 1.1 s.]`. The system prompt tells the model that "this" or "here" usually means what was circled, underlined or rested on.
+
+- The talk loop calls `IInkTrailService`: `Start()` when Talk arms, `Finish()` on release (or `Cancel()`), then `AttachAsync(screenshot, trail)` before sending; it returns the screenshot with `RequestScreenshot.Ink` set, or unchanged when the pointer barely moved over it.
+- The pointer is polled at 125 Hz on its own thread (high-resolution waitable timer), not hooked: nothing is added to every mouse event, it works over elevated windows, and the low-level mouse hook stays with walkthroughs (M8).
+- Gesture reading and the painter are pure code in `Clicky.Core/Ink` (`InkAnalyzer`, `InkPainter`), in screenshot pixels: loops are found where the path crosses itself (circling twice is one circle), straight unhurried sweeps or back-and-forth along a line are underlines, rests of 400 ms or more are pauses, quick straight flicks are moves, the rest are paths. Ink off the screenshot is dropped.
+- `settings.ink`: `enabled`, `showTrail`, `drawOnScreenshot` (all on by default). With `debug.saveCaptures` on, the inked screenshot is saved next to the debug captures.
+- Tray › Ink trail test (preview) runs the same steps for 5 s without the voice and shows what Claude would be told.
+
+## Walkthroughs and app skills (M8)
+
+When you ask how to do something, Claude answers one step at a time (a `step` action: number, estimated total, instruction, and where to act). `IWalkthroughs` (Clicky.Core/Walkthroughs) takes it from there: it draws the step, waits for you to do it, lets the app react, takes a new screenshot and asks Claude for the next step itself (a `[Walkthrough]` request on the deep model), up to 15 steps, until Claude says done.
+
+- Done is a click within about 24 DIP of the spot (wider when the screenshot was downscaled), a click anywhere on the element there, or that element getting keyboard focus, being pressed or selected (so Tab + Space works too). Steps without a spot (press a key, type something) move on with Done on the card.
+- Three clicks elsewhere, pressing some other button, or switching to another app (not Start or search) counts as going another way: Clicky takes a new look and Claude either moves on or helps you back, at most twice per step.
+- The step card at the bottom of the screen shows the step and has Back, Skip, Done and Stop; it never takes focus and stays out of screenshots. Asking something mid-walkthrough pauses it; it carries on after the answer. A walkthrough with no progress for 15 minutes ends.
+- The mouse hook (`WH_MOUSE_LL`, on a thread of its own that only queues button events) and the accessibility hooks (WinEvents + MSAA bounds, on a second thread) exist only while a walkthrough runs. A non-elevated Clicky can't see clicks in an elevated window (UIPI); Done on the card still works.
+- `TalkLoop` passes every reply event to `IWalkthroughs.Observe(event, geometry)` and leaves step actions to it, and sends the app guides for the app in front with each question. `IWalkthroughTurns` runs the engine's own requests (`AssistantWalkthroughTurns` by default). Talk clears the screen when you start asking; the current step comes back after the answer.
+- App skills: Markdown files in `%AppData%\Clicky\skills` with a front-matter header (`name`, `apps` = process names, `titles` = window-title fragments, `description`). The guides for the app in front go in `ClaudeRequest.Context` (`IAppSkills.ContextFor`), at most 3 per request and about 12,000 characters each, once per conversation and again after the file changes. Edits apply on the next question.
+- Tray › Walkthrough demo (preview) runs a scripted four-step walkthrough of a practice window: mouse, keyboard, off-track, Back, Skip and Done, with no Claude involved.
 
 ## Memory (M11)
 
@@ -172,6 +212,20 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 - **Terminals.** Windows Terminal, the console, mintty, PuTTY, Alacritty, WezTerm, ConEmu, Tabby, Hyper and xterm.js terminals (VS Code's) get every line break turned into a space, so dictation can never run a command. `dictation.terminalApps` adds more by exe name. Terminal pastes use Shift+Insert.
 - **Can't type there.** Administrator windows refuse input from a normal process (UIPI), so the text goes on the clipboard and the buddy says to press Ctrl+V. With nothing focused (desktop, taskbar), or when a hold is interrupted by another key, the text shows in a card with a Copy button instead of being typed into the wrong place. It is in the history either way.
 - **Timing** on the i7-13800H / RTX A1000: a sentence chunk takes 0.9 s on the GPU once warm, so in hands-free mode text appears about 1.5 s after you pause, and release-to-text after a hold is under 1 s however long you spoke.
+
+## Install, updates and bug reports (M18)
+
+**Install.** `ClickyApp-win-Setup.exe` (Velopack) installs per user to `%LocalAppData%\ClickyApp` with no admin prompt and no .NET install (the build is self-contained, about 92 MB), adds Start menu and desktop shortcuts and an Apps & features entry, and starts Clicky. The pack id is `ClickyApp`, not `Clicky`, because Setup empties its install folder and `%LocalAppData%\Clicky` holds the speech models. The pack id must never change, or installed copies stop updating. The installer is not code-signed yet, so SmartScreen warns on first run.
+
+**Updates.** A minute after startup and then every 6 hours the installed app asks GitHub releases for a newer version and downloads it in the background (deltas when the previous release is on the feed). It never restarts on its own: the tray menu gets **Update to x.y.z and restart** (and a notification says so once), and Settings > Updates and support has the same button plus Check for updates. Clicking it hands over to Velopack's updater, Clicky exits normally, the updater swaps `current\` and starts the new version. An update left waiting installs at the next start anyway. A development build (run from `bin\`) shows its version and skips all of this. Velopack's own log is `%LocalAppData%\Velopack\velopack_ClickyApp.log`.
+
+**Start with Windows** points the Run entry at the stable stub `%LocalAppData%\ClickyApp\Clicky.exe`, never at `current\`, so it survives updates. Uninstall removes the Run entry. Uninstall keeps settings, memory and speech models (`%AppData%\Clicky`, `%LocalAppData%\Clicky`); delete those folders to remove everything.
+
+**Releasing.** Push a tag (`git tag v0.2.0; git push origin v0.2.0`) or run the Release workflow by hand with a version. It tests, downloads the previous release for a delta, runs `build\pack.ps1`, and publishes a GitHub release with the Setup, full and delta packages and `releases.win.json`. Versions with a suffix (`0.3.0-beta.1`) or the pre-release box go out as pre-releases, which installed copies skip unless `updates.prerelease` is on. To try a release locally first: pack two versions into one folder, install the older Setup, set `updates.feedUrl` to that folder.
+
+**Report a bug** (tray menu, or Settings > Updates and support): describe what happened, and Clicky writes `bug-reports\clicky-bug-<time>.zip` with `report.md` (the description plus version, Windows build, CPU, memory, monitors and DPI, language, voice and speech engines, update state), the last 7 days of logs (newest first, 30 MB cap, an oversized file keeps its end), `settings.json` and Velopack's log. Keys and tokens and the Windows user name in paths are removed from everything (`SecretRedactor`). Memory, screenshots and recordings are never included. Clicky sends nothing itself: Open GitHub issue opens a new issue with the description and system info filled in and shows the zip in Explorer to drag in.
+
+**Separate instances.** A copy started with `CLICKY_DATA_DIR` set is its own single instance, so a test or dev build can run beside the installed one. Both still share the one `Clicky` Run entry.
 
 ## Routines (M15)
 

@@ -18,6 +18,12 @@ public sealed record ReplyText(string Text) : ReplyEvent;
 /// <summary>A validated non-speech action (point, highlight, …), already checked against the screenshot.</summary>
 public sealed record ReplyAction(ClickyAction Action) : ReplyEvent;
 
+/// <summary>
+/// An agent step took a new screenshot; coordinates in the actions after this event refer to it,
+/// not to the one the question came with.
+/// </summary>
+public sealed record ReplyScreenshotTaken(RequestScreenshot Screenshot) : ReplyEvent;
+
 /// <summary>The model produced an action that failed validation; it was dropped and the reply went on.</summary>
 public sealed record ReplyActionRejected(string Name, string Reason) : ReplyEvent;
 

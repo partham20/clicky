@@ -45,8 +45,9 @@ public sealed record HistoryLimits(int MaxTurns = 40, int TrimSlack = 10, int Ma
 /// Thread-safe.
 /// </summary>
 /// <param name="memory">
-/// What Clicky remembers about the user (M11), fixed for the whole conversation so the prompt
-/// prefix never changes under the cache. Null for none.
+/// What Clicky remembers about the user (M11), fixed for the conversation so the prompt prefix
+/// never changes under the cache, except when the user gives feedback (see <see cref="UpdateMemory"/>).
+/// Null for none.
 /// </param>
 public sealed class Conversation(TimeProvider? time = null, string? memory = null)
 {
@@ -58,7 +59,18 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
 
     public DateTimeOffset StartedAt { get; } = (time ?? TimeProvider.System).GetUtcNow();
 
-    public string? Memory { get; } = string.IsNullOrWhiteSpace(memory) ? null : memory.Trim();
+    public string? Memory
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return field;
+            }
+        }
+
+        private set;
+    } = Normalize(memory);
 
     /// <summary>Bumped whenever earlier history changes (a trim), so a backend that caches it can rebuild.</summary>
     public int Generation
@@ -152,6 +164,29 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
             }
         }
     }
+
+    /// <summary>
+    /// Replaces the memory block, e.g. right after the user said "you talk too much", so the next
+    /// answer already follows it. Bumps <see cref="Generation"/> because the prefix changed. Returns
+    /// false if nothing changed.
+    /// </summary>
+    public bool UpdateMemory(string? memory)
+    {
+        var normalized = Normalize(memory);
+        lock (_gate)
+        {
+            if (string.Equals(Memory, normalized, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            Memory = normalized;
+            Generation++;
+            return true;
+        }
+    }
+
+    private static string? Normalize(string? memory) => string.IsNullOrWhiteSpace(memory) ? null : memory.Trim();
 
     /// <summary>A turn as the time provider sees now; for backends building one.</summary>
     internal DateTimeOffset Now => _time.GetUtcNow();
