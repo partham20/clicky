@@ -11,6 +11,7 @@ using Clicky.Core.Assistant;
 using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Diagnostics;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
@@ -19,6 +20,7 @@ using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Talk;
+using Clicky.Core.Updates;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
@@ -118,6 +120,12 @@ internal static class ServiceCollectionExtensions
             sp.GetService<IMemoryModel>()));
         services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
 
+        services.AddSingleton<IUpdateBackend, VelopackUpdateBackend>();
+        services.AddSingleton(sp => new UpdateService(
+            sp.GetRequiredService<IUpdateBackend>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<ILogger<UpdateService>>()));
+        services.AddSingleton(sp => new BugReportWriter(paths, sp.GetRequiredService<ILogger<BugReportWriter>>()));
         // M16 connectors: backends and the agent loop take IConnectorTools.
         services.AddSingleton<IBrowserLauncher, ShellBrowserLauncher>();
         services.AddSingleton<ConnectorSecrets>();
@@ -178,6 +186,10 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
+        services.AddTransient<UpdatesSettingsView>();
+        services.AddSingleton<Func<UpdatesSettingsView>>(sp => sp.GetRequiredService<UpdatesSettingsView>);
+        services.AddTransient<BugReportWindow>();
+        services.AddSingleton<Func<BugReportWindow>>(sp => sp.GetRequiredService<BugReportWindow>);
         services.AddTransient<ConnectorsSettingsView>();
         services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
         services.AddTransient<DictationSettingsView>();
@@ -194,6 +206,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<UpdateStartup>();
         services.AddHostedService<ConnectorStartup>();
         services.AddHostedService<DictationCoordinator>();
 

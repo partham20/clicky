@@ -18,9 +18,9 @@ public enum StartupState
 /// <para>Task Manager does not delete Run entries when the user disables them; it writes a 12-byte
 /// value under Explorer\StartupApproved\Run whose first byte has bit 0 set for "disabled". We read
 /// that so the toggle reflects reality, and clear it when the user re-enables from inside Clicky.</para>
-/// <para>Velopack installs to %LocalAppData%\Clicky\current\Clicky.exe and swaps "current" on every
-/// update, with a stable launcher stub at %LocalAppData%\Clicky\Clicky.exe. The Run entry must
-/// point at the stub or it breaks after the first update.</para>
+/// <para>Velopack installs to %LocalAppData%\ClickyApp\current\Clicky.exe and swaps "current" on
+/// every update, with a stable launcher stub at %LocalAppData%\ClickyApp\Clicky.exe. The Run entry
+/// must point at the stub or it breaks after the first update (checked against a real install in M18).</para>
 /// </remarks>
 public sealed class StartupRegistration
 {
