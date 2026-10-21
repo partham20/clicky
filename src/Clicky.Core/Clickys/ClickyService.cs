@@ -417,52 +417,68 @@ public sealed class ClickyService : IAsyncDisposable
                 await HandleAsync(store, active, replyEvent, reply, progress).ConfigureAwait(false);
             }
 
-            // The Clicky's own tools (routines) are answered here, between replies, until Claude stops
-            // calling them or asks for something only the actor can do.
-            while (_tools is not null && progress.Last is { } latest && progress.Steps < clicky.MaxSteps && ToolCalls(latest) is { Count: > 0 } calls)
+            var runTools = _tools is null ? null : new RunTools(_tools, clicky, request.Trigger, extraTools ?? []);
+            while (true)
             {
-                var results = new List<ToolOutcome>(calls.Count);
-                foreach (var (action, toolCallId) in calls)
+                // The Clicky's own tools (routines) are answered here, between replies, until Claude stops
+                // calling them or asks for something only the actor can do.
+                while (_tools is not null && progress.Last is { } latest && progress.Steps < clicky.MaxSteps && ToolCalls(latest) is { Count: > 0 } calls)
                 {
-                    var outcome = await _tools.CallAsync(clicky, request.Trigger, action, toolCallId, token).ConfigureAwait(false);
-                    results.Add(outcome);
-                    await StepAsync(store, active, outcome.IsError ? ClickyStepKind.Rejected : ClickyStepKind.Action, Format($"{outcome.Name}: {outcome.Text}")).ConfigureAwait(false);
+                    var results = new List<ToolOutcome>(calls.Count);
+                    foreach (var (action, toolCallId) in calls)
+                    {
+                        var outcome = await _tools.CallAsync(clicky, request.Trigger, action, toolCallId, token).ConfigureAwait(false);
+                        results.Add(outcome);
+                        await StepAsync(store, active, outcome.IsError ? ClickyStepKind.Rejected : ClickyStepKind.Action, Format($"{outcome.Name}: {outcome.Text}")).ConfigureAwait(false);
+                    }
+
+                    await WaitIfPausedAsync(store, active, token).ConfigureAwait(false);
+                    var next = new ClaudeRequest(ToolsAnsweredText, RequestSource.Agent, Step: new AgentStep(progress.Steps, clicky.MaxSteps, results), Tools: extraTools);
+                    await StepAsync(store, active, ClickyStepKind.Request, "Asked Claude, with the results").ConfigureAwait(false);
+                    await foreach (var replyEvent in _model.ReplyAsync(conversation, next, token).ConfigureAwait(false))
+                    {
+                        await HandleAsync(store, active, replyEvent, reply, progress).ConfigureAwait(false);
+                    }
                 }
 
-                await WaitIfPausedAsync(store, active, token).ConfigureAwait(false);
-                var next = new ClaudeRequest(ToolsAnsweredText, RequestSource.Agent, Step: new AgentStep(progress.Steps, clicky.MaxSteps, results), Tools: extraTools);
-                await StepAsync(store, active, ClickyStepKind.Request, "Asked Claude, with the results").ConfigureAwait(false);
-                await foreach (var replyEvent in _model.ReplyAsync(conversation, next, token).ConfigureAwait(false))
+                if (!acts || progress.Last is not { } first || !_actor.WantsToAct(first) || progress.Steps >= clicky.MaxSteps)
                 {
-                    await HandleAsync(store, active, replyEvent, reply, progress).ConfigureAwait(false);
+                    break;
                 }
-            }
 
-            if (acts && progress.Last is { } first && _actor.WantsToAct(first) && progress.Steps < clicky.MaxSteps)
-            {
-                // The actor stops at the cap itself; the checks here are the backstop.
-                var options = new ClickyActorOptions(clicky.MaxSteps - progress.Steps);
-                await using var steps = _actor.ContinueAsync(conversation, first, screenshot, options, token).GetAsyncEnumerator(token);
-                while (true)
+                // The actor stops at the cap itself; the checks here are the backstop. Calls to the
+                // Clicky's own tools in its steps come back here through runTools.
+                var options = new ClickyActorOptions(clicky.MaxSteps - progress.Steps, Tools: runTools);
+                await using (var steps = _actor.ContinueAsync(conversation, first, progress.Screenshot ?? screenshot, options, token).GetAsyncEnumerator(token))
                 {
-                    // Steps end with ReplyCompleted; holding here keeps the actor from starting the next one.
-                    // At the cap, don't let the actor start (or act on) another step.
-                    if (progress.AtBoundary && progress.Steps >= clicky.MaxSteps)
+                    while (true)
                     {
-                        break;
-                    }
+                        // Steps end with ReplyCompleted; holding here keeps the actor from starting the next one.
+                        // At the cap, don't let the actor start (or act on) another step.
+                        if (progress.AtBoundary && progress.Steps >= clicky.MaxSteps)
+                        {
+                            break;
+                        }
 
-                    if (progress.AtBoundary)
-                    {
-                        await WaitIfPausedAsync(store, active, token).ConfigureAwait(false);
-                    }
+                        if (progress.AtBoundary)
+                        {
+                            await WaitIfPausedAsync(store, active, token).ConfigureAwait(false);
+                        }
 
-                    if (!await steps.MoveNextAsync().ConfigureAwait(false))
-                    {
-                        break;
-                    }
+                        if (!await steps.MoveNextAsync().ConfigureAwait(false))
+                        {
+                            break;
+                        }
 
-                    await HandleAsync(store, active, steps.Current, reply, progress).ConfigureAwait(false);
+                        await HandleAsync(store, active, steps.Current, reply, progress).ConfigureAwait(false);
+                    }
+                }
+
+                // The actor's last reply may end on one of the Clicky's own calls (Claude's routine
+                // action asks for no result, so the actor stops there): answer it and carry on.
+                if (progress.Last is not { } end || ToolCalls(end).Count == 0)
+                {
+                    break;
                 }
             }
 
@@ -623,6 +639,9 @@ public sealed class ClickyService : IAsyncDisposable
             case ReplyStarted started:
                 active.Update(r => r with { Model = started.Model });
                 break;
+            case ReplyScreenshotTaken taken:
+                progress.Screenshot = taken.Screenshot;
+                break;
             case ReplyText text:
                 progress.StepText.Append(text.Text);
                 break;
@@ -751,6 +770,17 @@ public sealed class ClickyService : IAsyncDisposable
 
     private sealed record RunResult(ClickyRunOutcome Outcome, ClaudeBackendException? BackendError);
 
+    /// <summary>The Clicky's own tools bound to one run, for the actor to hand calls back through.</summary>
+    private sealed class RunTools(IClickyTools tools, ClickyAgent clicky, ClickyRunTrigger trigger, IReadOnlyList<Connectors.ConnectorTool> offered) : Agent.IRunTools
+    {
+        public IReadOnlyList<Connectors.ConnectorTool> Offered { get; } = offered;
+
+        public bool Answers(ClickyAction action) => tools.Answers(action);
+
+        public Task<ToolOutcome> CallAsync(ClickyAction action, string? toolCallId, CancellationToken cancellationToken) =>
+            tools.CallAsync(clicky, trigger, action, toolCallId, cancellationToken);
+    }
+
     private sealed class RunProgress
     {
         public StringBuilder StepText { get; } = new();
@@ -760,6 +790,9 @@ public sealed class ClickyService : IAsyncDisposable
         public ReplyCompleted? Last { get; set; }
 
         public DoneAction? Done { get; set; }
+
+        /// <summary>The latest screenshot the actor took, which later replies' coordinates refer to.</summary>
+        public RequestScreenshot? Screenshot { get; set; }
 
         public bool AtBoundary { get; set; }
 

@@ -231,6 +231,36 @@ public sealed class ComputerAgentTests
     }
 
     [Fact]
+    public async Task The_callers_own_tool_calls_are_handed_back_alongside_computer_actions()
+    {
+        var own = new FakeRunTools(Tool("create_routine", readOnly: false));
+        var connectors = new FakeConnectorTools(Tool("github__list_issues", readOnly: true));
+        var assistant = new ScriptedAssistant();
+        var agent = Agent(assistant, connectors: connectors);
+        var create = new UseToolAction("create_routine", JsonDocument.Parse("""{"name":"Digest"}""").RootElement);
+
+        await RunAsync(agent, Conversation(), Calls(("t1", "left_click", new ClickAction(1, 1)), ("t2", "create_routine", create)), new AgentRunOptions(Tools: own));
+
+        Assert.Equal([((ClickyAction)create, (string?)"t2")], own.Called);
+        Assert.Empty(connectors.Called);
+        Assert.Single(_computer.Executed);
+        Assert.StartsWith("Click", Assert.Single(_presenter.Last.Prompts).Question, StringComparison.Ordinal); // The routine card asks for itself.
+        var request = Assert.Single(assistant.Requests);
+        Assert.Same(own.Offered, request.Tools);
+        var results = request.Step!.Results;
+        Assert.Equal(["t1", "t2"], results.Select(r => r.ToolCallId));
+        Assert.Equal(("create_routine", "The user saved the routine.", false), (results[1].Name, results[1].Text, results[1].IsError));
+        Assert.DoesNotContain(results, r => r.Text.Contains("unknown tool", StringComparison.Ordinal) || r.Text.Contains("No connected tool", StringComparison.Ordinal));
+
+        // Action tags (subscription backend): the routine tag is handed back too.
+        var tag = new RoutineAction("Digest", "Summarise new PDFs.", JsonDocument.Parse("""{ "kind": "daily", "time": "08:00" }""").RootElement.Clone());
+        await RunAsync(agent, Conversation(), Reply(new ClickAction(1, 1), tag), new AgentRunOptions(Tools: own));
+
+        Assert.Equal(((ClickyAction)tag, (string?)null), own.Called[^1]);
+        Assert.Equal(["Did click.", "The user saved the routine."], assistant.Requests[^1].Step!.Results.Select(r => r.Text));
+    }
+
+    [Fact]
     public async Task Unattended_runs_without_a_prompter_refuse_what_needs_asking()
     {
         var assistant = new ScriptedAssistant(Reply(new SayAction("Okay.")));

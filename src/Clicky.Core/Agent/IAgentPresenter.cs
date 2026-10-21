@@ -45,7 +45,24 @@ public interface IAgentCard : IPermissionPrompter, IDisposable
 /// and connector tools run without asking. Anything that sends, deletes, buys or can't be undone is
 /// still asked about, and moving the real mouse is too.
 /// </param>
-public sealed record AgentRunOptions(int? MaxSteps = null, bool Unattended = false, IPermissionPrompter? Permissions = null, bool PreApproved = false)
+/// <param name="Tools">Tools the caller answers itself (a Clicky's routine tools): offered on every step and handed back, never asked about here.</param>
+public sealed record AgentRunOptions(int? MaxSteps = null, bool Unattended = false, IPermissionPrompter? Permissions = null, bool PreApproved = false, IRunTools? Tools = null)
 {
     public static AgentRunOptions Default { get; } = new();
+}
+
+/// <summary>
+/// Tools for one run that its caller answers, such as a Clicky's routine tools (M15). They do their
+/// own asking (the routine card), so the agent neither gates nor counts down for them.
+/// </summary>
+public interface IRunTools
+{
+    /// <summary>Offered with every step's request, like connector tools.</summary>
+    IReadOnlyList<Connectors.ConnectorTool> Offered { get; }
+
+    /// <summary>True if <paramref name="action"/> is a call these tools answer.</summary>
+    bool Answers(Actions.ClickyAction action);
+
+    /// <summary>Runs one call. Problems come back as error outcomes; only cancellation throws.</summary>
+    Task<Assistant.ToolOutcome> CallAsync(Actions.ClickyAction action, string? toolCallId, CancellationToken cancellationToken);
 }

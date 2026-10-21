@@ -133,6 +133,38 @@ public sealed class ClickyRoutineToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_routine_proposed_during_computer_use_is_answered_by_the_clicky_not_the_agent()
+    {
+        var actor = new FakeClickyActor(
+            new ActorStep("Opening the folder.", [new ClickAction(5, 5)]),
+            new ActorStep("I'll make that a routine.", [new RoutineAction("Digest", "Summarise new PDFs.", JsonDocument.Parse("""{ "kind": "weekdays", "time": "08:00" }""").RootElement.Clone())], Stop: ReplyStop.EndTurn))
+        {
+            WantsFor = c => c.Actions.Any(a => a.ControlsComputer),
+        };
+        var tools = new RoutineTools(H.Engine, H.Time, () => H.Zone, new RoutineConfirmer(_presenter, H.Time, () => H.Zone));
+        await using var service = new ClickyService(
+            new ClickyPaths(Path.Combine(_dir, "hands")),
+            _model,
+            actor,
+            NullLogger<ClickyService>.Instance,
+            tools: new ClickyRoutineTools(new Lazy<RoutineTools>(() => tools)));
+        var hands = await service.CreateAsync(new ClickyDraft("Hands", UsesComputer: true));
+        _model.Then(Replies.Started(), new ReplyText("Let me look."), Replies.Completed(ReplyStop.Actions, null, new ClickAction(1, 1))).Then(Replies.Text("Saved: weekdays at 8."));
+
+        var outcome = await service.RunAsync(hands.Id, new ClickyRunRequest("Summarise new PDFs every weekday morning", ClickyRunTrigger.Chat));
+
+        Assert.True(outcome.Succeeded, outcome.Summary);
+        Assert.Equal(1, actor.Calls);
+        Assert.Equal(RoutineTools.For(attended: true).Select(t => t.Name), actor.Options!.Tools!.Offered.Select(t => t.Name));
+        var routine = Assert.Single(H.Engine.Routines);
+        Assert.Equal(("Digest", hands.Id), (routine.Name, routine.ClickyId));
+        Assert.Equal(RoutineConfirmer.SaveLabel, Assert.Single(_presenter.Last.Prompts).AllowLabel);
+        var result = Assert.Single(_model.Calls[^1].Request.Step!.Results);
+        Assert.Equal(("routine", false), (result.Name, result.IsError));
+        Assert.Contains("Saved: weekdays at 8.", outcome.Reply, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task The_tool_loop_stops_at_the_clickys_step_cap()
     {
         await Service.UpdateAsync(_desk.Id, new ClickyDraft("PDF Desk", MaxSteps: 2));

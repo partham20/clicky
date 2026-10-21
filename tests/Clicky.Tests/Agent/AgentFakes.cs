@@ -203,6 +203,23 @@ internal sealed class FakeConnectorTools(params ConnectorTool[] tools) : IConnec
     }
 }
 
+/// <summary>Tools the run's caller answers (a Clicky's routine tools): create_routine calls and routine tags.</summary>
+internal sealed class FakeRunTools(params ConnectorTool[] offered) : IRunTools
+{
+    public IReadOnlyList<ConnectorTool> Offered { get; } = offered;
+
+    public List<(ClickyAction Action, string? ToolCallId)> Called { get; } = [];
+
+    public bool Answers(ClickyAction action) =>
+        action is RoutineAction || (action is UseToolAction use && Offered.Any(t => t.Name == use.Tool));
+
+    public Task<ToolOutcome> CallAsync(ClickyAction action, string? toolCallId, CancellationToken cancellationToken)
+    {
+        Called.Add((action, toolCallId));
+        return Task.FromResult(new ToolOutcome(toolCallId, action is UseToolAction use ? use.Tool : action.Name, "The user saved the routine.", IsError: false));
+    }
+}
+
 internal sealed class RecordingMemory : IMemoryService
 {
     public event EventHandler<MemoryUpdatedEventArgs>? Updated;

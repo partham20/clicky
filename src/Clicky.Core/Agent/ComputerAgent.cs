@@ -64,6 +64,9 @@ public sealed class ComputerAgent(
         Question,
         Control,
         Tool,
+
+        /// <summary>A call the run's caller answers (<see cref="AgentRunOptions.Tools"/>).</summary>
+        Own,
     }
 
     private enum StepEnd
@@ -131,7 +134,7 @@ public sealed class ComputerAgent(
         var task = TaskText(conversation);
         using var card = options.Unattended ? null : presenter.Begin(task, screenshot?.Geometry.Source);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, card?.StopRequested ?? CancellationToken.None);
-        var run = new Run(GateFor(conversation), card, options.Unattended ? options.Permissions : card, options.Unattended, options.PreApproved, agentSettings);
+        var run = new Run(GateFor(conversation), card, options.Unattended ? options.Permissions : card, options.Unattended, options.PreApproved, agentSettings, options.Tools);
         var spoken = new StringBuilder();
         var reply = completed;
         var shot = screenshot;
@@ -201,7 +204,7 @@ public sealed class ComputerAgent(
                 var text = instruction ?? (next is null
                     ? "Clicky couldn't take a new screenshot. Carry on if you can without one, or tell the user."
                     : "Carry on with the task, or use done when it's finished.");
-                var request = new ClaudeRequest(text, RequestSource.Agent, next, Step: new AgentStep(step, maxSteps, result.Results));
+                var request = new ClaudeRequest(text, RequestSource.Agent, next, Step: new AgentStep(step, maxSteps, result.Results), Tools: options.Tools?.Offered);
 
                 ReplyCompleted? answered = null;
                 var stoppedMidReply = false;
@@ -339,14 +342,14 @@ public sealed class ComputerAgent(
     private static PixelPoint Centre(PixelRect rect) => new(rect.Left + (rect.Width / 2), rect.Top + (rect.Height / 2));
 
     /// <summary>What the step has to deal with, in order: every tool call (API), or the actions that want results (tags).</summary>
-    private static List<(ToolCallRecord? Call, ClickyAction? Action)> Items(ReplyCompleted reply)
+    private static List<(ToolCallRecord? Call, ClickyAction? Action)> Items(ReplyCompleted reply, IRunTools? tools)
     {
         if (reply.Calls.Count > 0)
         {
             return [.. reply.Calls.Select(c => ((ToolCallRecord?)c.Call, c.Action))];
         }
 
-        return [.. reply.Actions.Where(a => a.NeedsResult || a is WaitAction or DoneAction).Select(a => ((ToolCallRecord?)null, (ClickyAction?)a))];
+        return [.. reply.Actions.Where(a => a.NeedsResult || a is WaitAction or DoneAction || tools?.Answers(a) == true).Select(a => ((ToolCallRecord?)null, (ClickyAction?)a))];
     }
 
     private async Task<StepResult> ExecuteStepAsync(Run run, ReplyCompleted reply, RequestScreenshot? shot, int step, CancellationToken cancellationToken)
@@ -354,7 +357,7 @@ public sealed class ComputerAgent(
         var geometry = shot?.Geometry;
         var approvedAhead = run.Gate.TakeNextStepApproval();
         var plans = new List<Planned>();
-        foreach (var (call, action) in Items(reply))
+        foreach (var (call, action) in Items(reply, run.Tools))
         {
             plans.Add(await PlanAsync(run, call, action, geometry, approvedAhead, cancellationToken).ConfigureAwait(false));
         }
@@ -378,7 +381,7 @@ public sealed class ComputerAgent(
                 var refusal = run.Prompter is null ? "Not done: nobody is there to approve it right now." : "Not done: the user said not now.";
                 foreach (var plan in plans)
                 {
-                    results.Add(plan.Kind is ItemKind.Control or ItemKind.Tool or ItemKind.Question
+                    results.Add(plan.Kind is ItemKind.Control or ItemKind.Tool or ItemKind.Question or ItemKind.Own
                         ? new ToolOutcome(plan.Call?.Id, plan.Name, refusal, IsError: true)
                         : Passive(plan));
                 }
@@ -402,7 +405,7 @@ public sealed class ComputerAgent(
             {
                 foreach (var plan in plans)
                 {
-                    results.Add(plan.Kind is ItemKind.Control or ItemKind.Tool
+                    results.Add(plan.Kind is ItemKind.Control or ItemKind.Tool or ItemKind.Own
                         ? new ToolOutcome(plan.Call?.Id, plan.Name, "Not done: the user cancelled before it ran.", IsError: true)
                         : Passive(plan));
                 }
@@ -423,7 +426,7 @@ public sealed class ComputerAgent(
         foreach (var plan in plans)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if ((failed || declined) && plan.Kind is ItemKind.Control or ItemKind.Tool or ItemKind.Question)
+            if ((failed || declined) && plan.Kind is ItemKind.Control or ItemKind.Tool or ItemKind.Question or ItemKind.Own)
             {
                 results.Add(new ToolOutcome(plan.Call?.Id, plan.Name, declined ? "Not executed: the user said not now." : ComputerToolset.SkippedAfterFailure, IsError: true));
                 continue;
@@ -507,6 +510,13 @@ public sealed class ComputerAgent(
                     failed = outcome.Status != ControlStatus.Done;
                     results.Add(new ToolOutcome(plan.Call?.Id, plan.Name, outcome.Detail, failed));
                     break;
+                case ItemKind.Own:
+                    // The caller's tools do their own asking (the routine card).
+                    var own = await run.Tools!.CallAsync(plan.Action!, plan.Call?.Id, cancellationToken).ConfigureAwait(false);
+                    logger.LogInformation("Agent step {Step}: {Action} handed back -> {Result}", step, plan.Name, own.IsError ? "error" : "ok");
+                    failed = own.IsError;
+                    results.Add(own with { ToolCallId = plan.Call?.Id });
+                    break;
                 case ItemKind.Tool:
                     run.Card?.ShowStep(step, plan.Description);
                     var use = (UseToolAction)plan.Action!;
@@ -537,6 +547,11 @@ public sealed class ComputerAgent(
         if (call is { Accepted: false })
         {
             return new Planned(call, action, name, ItemKind.Rejected, name, Risk.Normal, Refusal: call.Error ?? "invalid input");
+        }
+
+        if (action is not null && run.Tools?.Answers(action) == true)
+        {
+            return new Planned(call, action, name, ItemKind.Own, Describe(action, ControlTarget.Unknown), Risk.Normal);
         }
 
         switch (action)
@@ -667,7 +682,7 @@ public sealed class ComputerAgent(
         }
     }
 
-    private sealed class Run(PermissionGate gate, IAgentCard? card, IPermissionPrompter? prompter, bool unattended, bool preApproved, AgentSettings settings)
+    private sealed class Run(PermissionGate gate, IAgentCard? card, IPermissionPrompter? prompter, bool unattended, bool preApproved, AgentSettings settings, IRunTools? tools)
     {
         public PermissionGate Gate { get; } = gate;
 
@@ -682,6 +697,9 @@ public sealed class ComputerAgent(
         public bool PreApproved { get; } = preApproved;
 
         public AgentSettings Settings { get; } = settings;
+
+        /// <summary>Calls the caller answers itself.</summary>
+        public IRunTools? Tools { get; } = tools;
 
         public bool CountedDown { get; set; }
 
