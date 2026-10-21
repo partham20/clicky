@@ -6,12 +6,14 @@ using Clicky.App.Views;
 using Clicky.Core;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
+using Clicky.Platform.Windows.Dictation;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
@@ -90,6 +92,21 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();
 
+        services.AddSingleton(sp => new PersonalVocabulary(paths.DictionaryFile, sp.GetRequiredService<ILogger<PersonalVocabulary>>()));
+        services.AddSingleton(sp => new DictationHistory(paths, TimeProvider.System, sp.GetRequiredService<ILogger<DictationHistory>>()));
+        services.AddSingleton<IDictationPolisher, RulesOnlyPolisher>();
+        services.AddSingleton(sp => new DictationInput(
+            sp.GetRequiredService<IMicrophone>(),
+            sp.GetRequiredService<Func<SpeechEngine, ISpeechToText>>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<PersonalVocabulary>(),
+            sp.GetRequiredService<DictationHistory>(),
+            sp.GetRequiredService<IDictationPolisher>(),
+            sp.GetRequiredService<ILogger<DictationInput>>()));
+        services.AddSingleton(sp => new CorrectionWatcher(sp.GetRequiredService<PersonalVocabulary>(), sp.GetRequiredService<ILogger<CorrectionWatcher>>()));
+        services.AddSingleton<WindowsTextInserter>();
+        services.AddSingleton<ITextInserter>(sp => sp.GetRequiredService<WindowsTextInserter>());
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
@@ -101,6 +118,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
         services.AddTransient<SpeechSettingsView>();
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
+        services.AddTransient<DictationSettingsView>();
+        services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
@@ -113,6 +132,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<DictationCoordinator>();
 
         return services;
     }

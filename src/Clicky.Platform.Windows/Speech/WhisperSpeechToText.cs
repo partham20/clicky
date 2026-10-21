@@ -48,7 +48,7 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
     private readonly ILogger<WhisperSpeechToText> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _loadGate = new(1, 1);
-    private readonly Dictionary<string, WhisperProcessor> _processors = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Language, string Prompt), WhisperProcessor> _processors = [];
 
     private WhisperFactory? _factory;
     private WhisperModel? _model;
@@ -74,7 +74,10 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
     /// <summary>True when the native runtime that loaded can use the GPU.</summary>
     public static bool GpuRuntimeLoaded => RuntimeOptions.LoadedLibrary == RuntimeLibrary.Vulkan;
 
-    public async Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, CancellationToken cancellationToken = default)
+    public Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, CancellationToken cancellationToken = default) =>
+        TranscribeAsync(samples, language, prompt: null, cancellationToken);
+
+    public async Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, string? prompt, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_download is { } download)
@@ -90,7 +93,7 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
         {
             var audio = samples.Length >= MinimumSamples ? samples.ToArray() : Pad(samples.Span);
             var stopwatch = Stopwatch.StartNew();
-            var processor = ProcessorFor(language, audio.Length, out var effectiveLanguage, out var reusable);
+            var processor = ProcessorFor(language, audio.Length, prompt, out var effectiveLanguage, out var reusable);
             try
             {
                 var parts = new List<string>();
@@ -168,7 +171,7 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
             try
             {
                 var stopwatch = Stopwatch.StartNew();
-                var processor = ProcessorFor(_settings.Current.Voice.Language, MinimumSamples, out _, out var reusable);
+                var processor = ProcessorFor(_settings.Current.Voice.Language, MinimumSamples, prompt: null, out _, out var reusable);
                 await foreach (var _ in processor.ProcessAsync(new float[MinimumSamples]).ConfigureAwait(false))
                 {
                 }
@@ -341,9 +344,10 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
     /// fresh one per request with the audio context cut to the clip's length: the encoder's cost
     /// scales with it, which takes small.en from about 2.5 s to 0.5 s for a short question. (On
     /// the CPU nothing has to be compiled per size, and the .en models do not repeat themselves
-    /// the way large-v3-turbo does.)
+    /// the way large-v3-turbo does.) A prompt (the personal dictionary) is part of a processor, so
+    /// GPU processors are kept per language and prompt; only the newest prompt is kept.
     /// </summary>
-    private WhisperProcessor ProcessorFor(string language, int samples, out string effective, out bool reusable)
+    private WhisperProcessor ProcessorFor(string language, int samples, string? prompt, out string effective, out bool reusable)
     {
         var model = _model!;
         effective = string.IsNullOrWhiteSpace(language) ? VoiceSettings.DefaultLanguage : language;
@@ -353,8 +357,10 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
             effective = "en";
         }
 
+        prompt = string.IsNullOrWhiteSpace(prompt) ? string.Empty : prompt.Trim();
+        (string Language, string Prompt) key = (effective, prompt);
         reusable = _onGpu;
-        if (reusable && _processors.TryGetValue(effective, out var cached))
+        if (reusable && _processors.TryGetValue(key, out var cached))
         {
             return cached;
         }
@@ -363,6 +369,10 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
             .WithThreads(Math.Clamp(Environment.ProcessorCount - 4, 1, 12))
             .WithNoContext();
         builder = effective == VoiceSettings.AutoLanguage ? builder.WithLanguageDetection() : builder.WithLanguage(effective);
+        if (prompt.Length > 0)
+        {
+            builder = builder.WithPrompt(prompt);
+        }
         if (!reusable)
         {
             // One unit is 20 ms of audio; 1500 is the full window. With less than ~5 s of context the
@@ -373,7 +383,16 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
         var processor = builder.Build();
         if (reusable)
         {
-            _processors[effective] = processor;
+            // An older prompt for this language is stale now (the dictionary changed).
+            var forLanguage = effective;
+            var hasPrompt = prompt.Length > 0;
+            foreach (var stale in _processors.Keys.Where(k => k.Language == forLanguage && k.Prompt.Length > 0 && hasPrompt).ToArray())
+            {
+                _processors.Remove(stale, out var old);
+                old?.Dispose();
+            }
+
+            _processors[key] = processor;
         }
 
         return processor;
