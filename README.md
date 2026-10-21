@@ -7,7 +7,7 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, and later the agent loop. No Windows APIs |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, Clickys (SQLite), and later the agent loop. No Windows APIs |
 | `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
@@ -23,6 +23,9 @@ dotnet run --project src/Clicky.App
 
 Package versions are pinned centrally in `Directory.Packages.props`. Warnings are errors.
 
+Installer: `.uild\pack.ps1 -Version 0.2.0` publishes a self-contained win-x64 build and packs it with Velopack (`vpk`, pinned in `dotnet-tools.json`) into `artifacts
+eleases`. Releases are cut by `.github/workflows/release.yml` (see Install and updates below).
+
 ## Data
 
 Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` environment variable):
@@ -36,10 +39,15 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
 - `claude`: `backend` (`Api` or `Subscription`), `routing` (`Auto`, `AlwaysFast`, `AlwaysDeep`), `apiFastModel` (`claude-haiku-5-5`), `apiDeepModel` (`claude-opus-5-5`), `subscriptionFastModel` (`haiku`), `subscriptionDeepModel` (`opus`), `fastEffort` (`Low`), `deepEffort` (`Medium`), `maxTurns` (40), `idleResetMinutes` (10), `cliPath` (empty finds `claude.exe`). Also in Settings › Claude. The Anthropic key is in Credential Manager as `Clicky/anthropic-api-key` (or `ANTHROPIC_API_KEY` for development).
+- `skills\*.md` (and `skills\<name>\SKILL.md`): app guides sent with questions asked while that app is in front (see Walkthroughs below). The folder gets a README with the format on first run.
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
+- `updates`: `autoCheck` (true), `autoDownload` (true), `feedUrl` (empty means GitHub releases of this repository; another GitHub repo URL, an https URL or a local folder with `releases.win.json` also work), `prerelease` (false). Also in Settings > Updates and support.
+- `bug-reports\clicky-bug-*.zip`: made by Report a bug; the newest 5 are kept.
 - `dictation`: `maxMinutes` (30), `typeWhileSpeaking` (true, hands-free), `spokenCommands` (true), `learnCorrections` (true), `keepHistoryDays` (30), `cleanup` (`Auto`, `Always`, `Off`), `terminalApps`, `pasteApps`. Also in Settings › Dictation. `dictionary.json` is the personal dictionary and `dictation\` the transcript history (see Dictation below).
+- `clickys.db` (SQLite) holds your Clickys, their chats, runs and activity; `clickys\<id>\` is each Clicky's files folder (see Clickys and Home below). WebView2's cache for Home's preview is in `%LocalAppData%\Clicky\webview2`.
+- `suggestions.json`: every morning idea, what you did with it, and which mornings had a card (see Suggestions below), kept 120 days. `suggestions`: `enabled` (true), `showAfterHour` (6), `lastHour` (12), `lookbackHours` (72), `maxIdeas` (3), `searchWeb` (true), `noRepeatDays` (14), `ignoredMorningsBeforeBackOff` (3).
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
 ## Behaviour notes
@@ -152,6 +160,18 @@ While Talk is held the user can circle, underline or rest the pointer on things.
 - `settings.ink`: `enabled`, `showTrail`, `drawOnScreenshot` (all on by default). With `debug.saveCaptures` on, the inked screenshot is saved next to the debug captures.
 - Tray › Ink trail test (preview) runs the same steps for 5 s without the voice and shows what Claude would be told.
 
+## Walkthroughs and app skills (M8)
+
+When you ask how to do something, Claude answers one step at a time (a `step` action: number, estimated total, instruction, and where to act). `IWalkthroughs` (Clicky.Core/Walkthroughs) takes it from there: it draws the step, waits for you to do it, lets the app react, takes a new screenshot and asks Claude for the next step itself (a `[Walkthrough]` request on the deep model), up to 15 steps, until Claude says done.
+
+- Done is a click within about 24 DIP of the spot (wider when the screenshot was downscaled), a click anywhere on the element there, or that element getting keyboard focus, being pressed or selected (so Tab + Space works too). Steps without a spot (press a key, type something) move on with Done on the card.
+- Three clicks elsewhere, pressing some other button, or switching to another app (not Start or search) counts as going another way: Clicky takes a new look and Claude either moves on or helps you back, at most twice per step.
+- The step card at the bottom of the screen shows the step and has Back, Skip, Done and Stop; it never takes focus and stays out of screenshots. Asking something mid-walkthrough pauses it; it carries on after the answer. A walkthrough with no progress for 15 minutes ends.
+- The mouse hook (`WH_MOUSE_LL`, on a thread of its own that only queues button events) and the accessibility hooks (WinEvents + MSAA bounds, on a second thread) exist only while a walkthrough runs. A non-elevated Clicky can't see clicks in an elevated window (UIPI); Done on the card still works.
+- `TalkLoop` passes every reply event to `IWalkthroughs.Observe(event, geometry)` and leaves step actions to it, and sends the app guides for the app in front with each question. `IWalkthroughTurns` runs the engine's own requests (`AssistantWalkthroughTurns` by default). Talk clears the screen when you start asking; the current step comes back after the answer.
+- App skills: Markdown files in `%AppData%\Clicky\skills` with a front-matter header (`name`, `apps` = process names, `titles` = window-title fragments, `description`). The guides for the app in front go in `ClaudeRequest.Context` (`IAppSkills.ContextFor`), at most 3 per request and about 12,000 characters each, once per conversation and again after the file changes. Edits apply on the next question.
+- Tray › Walkthrough demo (preview) runs a scripted four-step walkthrough of a practice window: mouse, keyboard, off-track, Back, Skip and Done, with no Claude involved.
+
 ## Memory (M11)
 
 Two Markdown files in `%AppData%\Clicky\memory`, both plain text you can edit in Settings › Memory or any editor:
@@ -193,3 +213,41 @@ Hold Ctrl+Win, speak, release: the text goes in at the caret of whatever app has
 - **Terminals.** Windows Terminal, the console, mintty, PuTTY, Alacritty, WezTerm, ConEmu, Tabby, Hyper and xterm.js terminals (VS Code's) get every line break turned into a space, so dictation can never run a command. `dictation.terminalApps` adds more by exe name. Terminal pastes use Shift+Insert.
 - **Can't type there.** Administrator windows refuse input from a normal process (UIPI), so the text goes on the clipboard and the buddy says to press Ctrl+V. With nothing focused (desktop, taskbar), or when a hold is interrupted by another key, the text shows in a card with a Copy button instead of being typed into the wrong place. It is in the history either way.
 - **Timing** on the i7-13800H / RTX A1000: a sentence chunk takes 0.9 s on the GPU once warm, so in hands-free mode text appears about 1.5 s after you pause, and release-to-text after a hold is under 1 s however long you spoke.
+
+## Install, updates and bug reports (M18)
+
+**Install.** `ClickyApp-win-Setup.exe` (Velopack) installs per user to `%LocalAppData%\ClickyApp` with no admin prompt and no .NET install (the build is self-contained, about 92 MB), adds Start menu and desktop shortcuts and an Apps & features entry, and starts Clicky. The pack id is `ClickyApp`, not `Clicky`, because Setup empties its install folder and `%LocalAppData%\Clicky` holds the speech models. The pack id must never change, or installed copies stop updating. The installer is not code-signed yet, so SmartScreen warns on first run.
+
+**Updates.** A minute after startup and then every 6 hours the installed app asks GitHub releases for a newer version and downloads it in the background (deltas when the previous release is on the feed). It never restarts on its own: the tray menu gets **Update to x.y.z and restart** (and a notification says so once), and Settings > Updates and support has the same button plus Check for updates. Clicking it hands over to Velopack's updater, Clicky exits normally, the updater swaps `current\` and starts the new version. An update left waiting installs at the next start anyway. A development build (run from `bin\`) shows its version and skips all of this. Velopack's own log is `%LocalAppData%\Velopack\velopack_ClickyApp.log`.
+
+**Start with Windows** points the Run entry at the stable stub `%LocalAppData%\ClickyApp\Clicky.exe`, never at `current\`, so it survives updates. Uninstall removes the Run entry. Uninstall keeps settings, memory and speech models (`%AppData%\Clicky`, `%LocalAppData%\Clicky`); delete those folders to remove everything.
+
+**Releasing.** Push a tag (`git tag v0.2.0; git push origin v0.2.0`) or run the Release workflow by hand with a version. It tests, downloads the previous release for a delta, runs `build\pack.ps1`, and publishes a GitHub release with the Setup, full and delta packages and `releases.win.json`. Versions with a suffix (`0.3.0-beta.1`) or the pre-release box go out as pre-releases, which installed copies skip unless `updates.prerelease` is on. To try a release locally first: pack two versions into one folder, install the older Setup, set `updates.feedUrl` to that folder.
+
+**Report a bug** (tray menu, or Settings > Updates and support): describe what happened, and Clicky writes `bug-reports\clicky-bug-<time>.zip` with `report.md` (the description plus version, Windows build, CPU, memory, monitors and DPI, language, voice and speech engines, update state), the last 7 days of logs (newest first, 30 MB cap, an oversized file keeps its end), `settings.json` and Velopack's log. Keys and tokens and the Windows user name in paths are removed from everything (`SecretRedactor`). Memory, screenshots and recordings are never included. Clicky sends nothing itself: Open GitHub issue opens a new issue with the description and system info filled in and shows the zip in Explorer to drag in.
+
+**Separate instances.** A copy started with `CLICKY_DATA_DIR` set is its own single instance, so a test or dev build can run beside the installed one. Both still share the one `Clicky` Run entry.
+
+## Clickys and Home (M14)
+
+Home (Ctrl+Alt+A, the tray menu, or launching Clicky again) has the docked buddy and your Clickys on the left, the selected Clicky's chat in the middle, and Preview, Activity and History on the right.
+
+- A Clicky is a persistent helper: a name, a colour, instructions sent with every task, notes it keeps in mind, and a files folder (`Files`, or drop files on the chat). Small text files in the folder (16 KB each, 48 KB in all) go with every task; the rest are listed by name. Templates in New Clicky give a starting point.
+- Writing in its chat starts a run. Each run gets the Clicky's instructions, notes, files, what Clicky remembers about you (M11) and the last 20 exchanges of its chat, and goes to the deep model on the active backend. Replies are written to be read, in Markdown, not spoken. One run per Clicky at a time (later ones queue), and only one run at a time may use the computer.
+- Runs can be paused (they hold at the next step boundary), resumed and stopped from the bar above the composer. A stopped run keeps what it said so far. A run cut off by quitting Clicky shows as Interrupted; History's `Ask again` reruns any finished task.
+- A reply lands in the chat as unread (badge in the list) and, if you're not looking at that Clicky, as a Windows notification. Nothing is spoken.
+- Preview renders the selected reply's Markdown in WebView2, or the HTML document it contains (a reply with an ```` ```html ```` block). Previews run with scripts off, a Content-Security-Policy, and every network request refused; links open in your browser. Without the WebView2 Runtime the preview falls back to plain text. `Save to files` writes the reply (`.md`, or `.html` for a document) into the Clicky's folder.
+- Activity is the run's step log (requests, what it said, actions, refusals, pauses); History lists runs with status, trigger, duration, steps, tokens and cost.
+- `Can see the screen and use the computer` lets a Clicky's runs take a screenshot and act through the computer-use agent (M13). Unattended runs never get a countdown or card: actions needing permission are refused unless a permission prompter is wired in. Until M13 is wired, every Clicky chats and uses connectors only.
+- Schema changes run as numbered migrations (`PRAGMA user_version`); an existing database is copied to `clickys.db.v<N>.bak` before an upgrade, a damaged one is moved to `clickys.db.corrupt-<time>` and a fresh one started, and one written by a newer Clicky is left untouched with an error in Home.
+- For code: `ClickyService` (in `Clicky.Core.Clickys`) is the API. `CreateAsync`, `UpdateAsync`, `DeleteAsync`, `ListAsync`; `SendAsync(clickyId, text)` for chat; `RunAsync(clickyId, ClickyRunRequest, ct)` runs a task and waits for its `ClickyRunOutcome` (routines use this; it throws `ClaudeBackendException` on backend failure); `Pause`, `Resume`, `Cancel`, `RetryAsync`; `Changed` and `RunFinished` events. Computer use plugs in as an `IClickyActor`.
+
+## Suggestions (M17)
+
+Each morning Clicky looks through your connected apps and the web and puts a few ideas in a card at the bottom right, one at a time: **Do it**, **Next** (Not this, on the last one), **Adjust…**, or ✕ for not now. The tray's **Today's ideas** shows them again, or finds some now if today hasn't been researched yet.
+
+- **Research, read-only.** From an hour before `suggestions.showAfterHour`, the fast model goes through the connectors (M16) for the last `lookbackHours` (72) and today and tomorrow's calendar: up to 6 rounds of up to 6 calls, plus 4 web searches. Only tools the server declares read-only are offered, and each call is checked against that list again before it runs, so this pass can never send, change or delete anything. Calls are written as `<call tool="…">{json}</call>` tags rather than native tool use, so the same loop runs on both backends. Web search is the Messages API's web search tool with an API key, or Claude Code's `WebSearch` (`--tools WebSearch --allowedTools WebSearch`) on the subscription. Results are cut at 6,000 characters each. Nothing runs without either a read-only connector tool or web search.
+- **Editor.** The deep model turns the notes into at most `maxIdeas` distinct ideas, each with a title, a couple of sentences, why now, its sources (app and item ID or URL) and the task "Do it" hands over. It sees what you did with earlier ideas (did it, skipped, closed, asked to change) from the last 45 days, and the ideas of the last `noRepeatDays`. `RepeatFilter` then drops anything about the same item, with the same topic, or sharing most meaningful words with an idea from those days, without trusting the model to have listened.
+- **The card.** It appears from `showAfterHour` until `lastHour`, once you have used the keyboard or mouse in the last 2 minutes and are not in a call, sharing your screen, in Focus Assist or full screen, and not talking to Clicky. It never takes focus, stays out of screenshots and shares, and goes away after 20 minutes (not while the mouse is over it). **Do it** hands the task to Talk as a typed request, so the answer comes like any other, and the computer-use agent (M13) carries it out when it is installed; anything that sends or changes something is drafted for you to confirm. **Adjust…** asks what to change and the deep model rewrites that idea.
+- **Back-off.** A morning whose card goes away with no reaction counts as ignored. After 3 ignored mornings in a row the card comes every 2nd day, then every 4th, then weekly; any reaction brings it back to daily. Research is skipped on the days in between.
+- **Cost.** One research pass (a few fast requests) and one deep request a day; nothing on days with no card.

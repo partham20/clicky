@@ -84,7 +84,7 @@
     },
     "step": {
       "type": "object",
-      "description": "One step of a walkthrough the user wants to learn. Give one step at a time, then wait for the user. x and y mark where the user should act.",
+      "description": "One step of a walkthrough the user wants to learn (at most 15 steps). Give one step at a time, then wait for the user. x and y mark where the user should act.",
       "properties": {
         "type": { "const": "step" },
         "index": { "type": "integer", "minimum": 1 },

@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using Clicky.App.Annotations;
 using Clicky.App.Hosting;
 using Clicky.App.Ink;
+using Clicky.App.Walkthroughs;
 using Clicky.Core.Buddy;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
@@ -12,7 +13,7 @@ using H.NotifyIcon.Core;
 namespace Clicky.App.Tray;
 
 /// <summary>Owns the notification-area icon. Create, show and dispose on the UI thread.</summary>
-public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo, InkTrailDemo inkTrailDemo, ITodaysIdeas suggestions) : IDisposable
+public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo, InkTrailDemo inkTrailDemo, WalkthroughDemo walkthroughDemo, ITodaysIdeas suggestions) : IDisposable
 {
     private TaskbarIcon? _icon;
 
@@ -57,6 +58,11 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
     {
         var menu = new ContextMenu { DataContext = viewModel };
 
+        var update = new MenuItem { Command = viewModel.UpdateCommand, FontWeight = FontWeights.SemiBold };
+        update.SetBinding(HeaderedItemsControl.HeaderProperty, new Binding(nameof(TrayViewModel.UpdateHeader)));
+        update.SetBinding(UIElement.VisibilityProperty, new Binding(nameof(TrayViewModel.UpdateReady)) { Converter = new BooleanToVisibilityConverter() });
+        menu.Items.Add(update);
+
         menu.Items.Add(new MenuItem
         {
             Header = "Open Home",
@@ -94,7 +100,13 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
         inkTest.Click += (_, _) => inkTrailDemo.Play();
         menu.Items.Add(inkTest);
 
+        // Scripted steps in a practice window: checks click, keyboard and off-track detection without Claude.
+        var walkthroughDemoItem = new MenuItem { Header = "Walkthrough demo (preview)" };
+        walkthroughDemoItem.Click += (_, _) => walkthroughDemo.Play();
+        menu.Items.Add(walkthroughDemoItem);
+
         menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem { Header = "Report a bug…", Command = viewModel.ReportBugCommand });
         menu.Items.Add(new MenuItem { Header = "Quit Clicky", Command = viewModel.QuitCommand });
         return menu;
     }
