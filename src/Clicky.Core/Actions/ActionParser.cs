@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Clicky.Core.Routines;
 
 namespace Clicky.Core.Actions;
 
@@ -116,8 +117,25 @@ public static class ActionParser
         StepAction { X: null, Y: not null } or StepAction { X: not null, Y: null } => "step needs both x and y, or neither",
         SayAction { Text: var text } when string.IsNullOrWhiteSpace(text) => "text is blank",
         OpenUrlAction { Url: var url } when !IsWebAddress(url) => "url must be an absolute http or https address",
+        RoutineAction { Title: var title } when string.IsNullOrWhiteSpace(title) => "name is blank",
+        RoutineAction { Prompt: var prompt } when string.IsNullOrWhiteSpace(prompt) => "prompt is blank",
+        RoutineAction routine => ScheduleError(routine.Schedule),
         _ => null,
     };
+
+    /// <summary>Schedules the schema allows but that don't add up, e.g. daily without a time.</summary>
+    private static string? ScheduleError(JsonElement schedule)
+    {
+        try
+        {
+            RoutineTools.ParseSchedule(schedule);
+            return null;
+        }
+        catch (ArgumentException ex)
+        {
+            return "schedule: " + ex.Message;
+        }
+    }
 
     /// <summary>True for an absolute http(s) address with a host: no file:, javascript: or relative paths.</summary>
     public static bool IsWebAddress(string? url) =>

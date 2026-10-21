@@ -25,6 +25,7 @@ using Clicky.Core.Hotkeys;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
+using Clicky.Core.Routines;
 using Clicky.Core.Settings;
 using Clicky.Core.Skills;
 using Clicky.Core.Suggestions;
@@ -208,7 +209,8 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<ILogger<TalkLoop>>(),
             sp.GetService<IComputerAgent>(),
             walkthroughs: sp.GetRequiredService<IWalkthroughs>(),
-            context: conversation => sp.GetRequiredService<IAppSkills>().ContextFor(conversation, sp.GetRequiredService<IForegroundApp>().Current())));
+            context: conversation => sp.GetRequiredService<IAppSkills>().ContextFor(conversation, sp.GetRequiredService<IForegroundApp>().Current()),
+            routines: sp.GetService<IRoutineProposer>()));
         services.AddSingleton<TalkAnswerer>();
 
         // M17 suggestions: daily read-only research, the morning card, "Do it" through the Talk loop.

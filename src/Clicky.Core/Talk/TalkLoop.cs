@@ -5,6 +5,7 @@ using Clicky.Core.Assistant;
 using Clicky.Core.Geometry;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
+using Clicky.Core.Routines;
 using Clicky.Core.Walkthroughs;
 using Microsoft.Extensions.Logging;
 
@@ -13,8 +14,8 @@ namespace Clicky.Core.Talk;
 /// <summary>
 /// The question-and-answer half of Talk (M6): memory into the prompt, the screenshot and question to
 /// Claude, the answer streamed into the speaker as it arrives, its point/highlight/draw actions onto
-/// the screen, the exchange into memory, and the computer-use agent (M13) when the answer asks for
-/// it. Hotkeys, the mic and the buddy are the app's side (HotkeyCoordinator).
+/// the screen, the exchange into memory, the computer-use agent (M13) when the answer asks for it,
+/// and routines Claude sets up (M15) to the user to confirm. Hotkeys, the mic and the buddy are the app's side (HotkeyCoordinator).
 /// </summary>
 /// <remarks>
 /// <para>Order of a Talk: <see cref="Begin"/> when the keys go down (stops the answer in flight,
@@ -35,6 +36,7 @@ public sealed class TalkLoop : IDisposable
     private readonly IComputerAgent? _agent;
     private readonly IWalkthroughs? _walkthroughs;
     private readonly Func<Conversation, string?>? _context;
+    private readonly IRoutineProposer? _routines;
     private readonly ILogger<TalkLoop> _logger;
     private readonly TimeProvider _time;
     private readonly Lock _gate = new();
@@ -46,6 +48,7 @@ public sealed class TalkLoop : IDisposable
 
     /// <param name="walkthroughs">Gets every reply event and draws step actions itself (M8).</param>
     /// <param name="context">Reference text for a question in a conversation: the app guides for the app in front (M8).</param>
+    /// <param name="routines">Asks the user to save routines Claude proposes (M15); without it they are dropped.</param>
     public TalkLoop(
         IClaudeAssistant assistant,
         IMemoryService memory,
@@ -55,7 +58,8 @@ public sealed class TalkLoop : IDisposable
         IComputerAgent? agent = null,
         TimeProvider? time = null,
         IWalkthroughs? walkthroughs = null,
-        Func<Conversation, string?>? context = null)
+        Func<Conversation, string?>? context = null,
+        IRoutineProposer? routines = null)
     {
         _assistant = assistant;
         _memory = memory;
@@ -66,6 +70,7 @@ public sealed class TalkLoop : IDisposable
         _time = time ?? TimeProvider.System;
         _walkthroughs = walkthroughs;
         _context = context;
+        _routines = routines;
 
         _assistant.ConversationEnded += OnConversationEnded;
         _memory.Updated += OnMemoryUpdated;
@@ -241,6 +246,7 @@ public sealed class TalkLoop : IDisposable
 
             answer.Reply?.Complete();
             Record(question, answered.Length > 0 ? answered : answer.Spoken.ToString());
+            Propose(answer, conversation, question.Cursor);
             _logger.LogInformation(
                 "Talk answered: {Chars} chars, {Marks} marks, stop {Stop}",
                 answer.Spoken.Length,
@@ -304,6 +310,20 @@ public sealed class TalkLoop : IDisposable
                 // Speech already streamed as text.
                 break;
 
+            case ReplyAction { Action: RoutineAction routine }:
+                answer.Routines.Add((routine, null));
+                break;
+
+            case ReplyToolCall { Action: RoutineAction routine } call:
+                // Right after its ReplyAction (API backend): remember which tool call to answer.
+                var index = answer.Routines.FindLastIndex(r => r.ToolCallId is null && ReferenceEquals(r.Action, routine));
+                if (index >= 0)
+                {
+                    answer.Routines[index] = (routine, call.Call.Id);
+                }
+
+                break;
+
             case ReplyAction { Action: StepAction } when _walkthroughs is not null:
                 // The walkthrough draws its steps and watches for the user doing them.
                 answer.Marks++;
@@ -343,6 +363,34 @@ public sealed class TalkLoop : IDisposable
         catch (ArgumentException ex)
         {
             _logger.LogWarning(ex, "Talk: could not show {Action}", action.Name);
+        }
+    }
+
+    /// <summary>Routines Claude set up go to the user to confirm, after the answer has been said.</summary>
+    private void Propose(Answer answer, Conversation conversation, PixelPoint? cursor)
+    {
+        if (answer.Routines.Count == 0)
+        {
+            return;
+        }
+
+        if (_routines is null)
+        {
+            _logger.LogInformation("Talk: Claude proposed {Count} routine(s) but routines aren't available; dropped", answer.Routines.Count);
+            return;
+        }
+
+        PixelRect? near = cursor is { } c ? new PixelRect(c.X, c.Y, c.X + 1, c.Y + 1) : null;
+        foreach (var (routine, toolCallId) in answer.Routines)
+        {
+            try
+            {
+                _routines.Propose(routine, conversation, toolCallId, near);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                _logger.LogWarning(ex, "Talk: could not propose the routine \"{Name}\"", routine.Title);
+            }
         }
     }
 
@@ -446,6 +494,9 @@ public sealed class TalkLoop : IDisposable
         public ScreenshotGeometry? Geometry { get; set; } = geometry;
 
         public int Marks { get; set; }
+
+        /// <summary>Routines Claude proposed, with the tool call that carried each (API backend).</summary>
+        public List<(RoutineAction Action, string? ToolCallId)> Routines { get; } = [];
 
         public void Say(string text)
         {

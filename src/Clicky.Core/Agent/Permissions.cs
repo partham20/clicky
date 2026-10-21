@@ -24,14 +24,18 @@ public enum PermissionKind
 
     /// <summary>The model asked first (ask_permission).</summary>
     Question,
+
+    /// <summary>Saving a routine Claude set up (M15). Asked every time: Always isn't offered.</summary>
+    Routine,
 }
 
 /// <param name="Question">What Clicky wants to do, as a question: "Click "Save" in Notepad?"</param>
 /// <param name="Detail">Why, or what exactly (the text to type, the tool's arguments), if useful.</param>
 /// <param name="Irreversible">Sends, deletes, buys or can't be undone: shown as a warning, and Always isn't offered.</param>
-public sealed record PermissionPrompt(string Question, string? Detail, PermissionKind Kind, bool Irreversible)
+/// <param name="AllowLabel">The yes button, when "Allow once" doesn't fit (e.g. "Save routine").</param>
+public sealed record PermissionPrompt(string Question, string? Detail, PermissionKind Kind, bool Irreversible, string? AllowLabel = null)
 {
-    public bool OffersAlways => !Irreversible;
+    public bool OffersAlways => !Irreversible && Kind != PermissionKind.Routine;
 }
 
 /// <summary>Asks the user. The agent card is one; an unattended run (M14 Clickys) passes its own.</summary>

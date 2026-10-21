@@ -6,7 +6,7 @@ namespace Clicky.Tests.Assistant;
 public sealed class ActionSchemaTests
 {
     private static readonly string[] s_expectedNames =
-        ["say", "point", "highlight", "draw", "step", "click", "type", "key", "scroll", "wait", "ask_permission", "done", "open_url", "use_tool"];
+        ["say", "point", "highlight", "draw", "step", "click", "type", "key", "scroll", "wait", "ask_permission", "done", "open_url", "use_tool", "routine"];
 
     private static readonly ClickyAction[] s_actions =
     [
@@ -26,12 +26,13 @@ public sealed class ActionSchemaTests
         new DoneAction("Saved the file.", true),
         new OpenUrlAction("https://github.com/notifications"),
         new UseToolAction("github__create_issue", JsonSerializer.SerializeToElement(new { title = "Bug", labels = new[] { "ui" } })),
+        new RoutineAction("Inbox check", "Check my inbox and flag anything urgent.", JsonSerializer.SerializeToElement(new { kind = "every", every_minutes = 180, from = "09:00", until = "21:00", days = new[] { "mon", "fri" } })),
     ];
 
     public static TheoryData<ClickyAction> EveryAction => new(s_actions);
 
     [Fact]
-    public void Schema_has_the_fourteen_actions_in_order_with_descriptions()
+    public void Schema_has_the_fifteen_actions_in_order_with_descriptions()
     {
         var schema = ActionSchema.Default;
 
@@ -91,6 +92,20 @@ public sealed class ActionSchemaTests
         var parsed = ActionParser.ParseToolCall(action.Name, input);
         Assert.True(parsed.IsValid, parsed.Error);
         Assert.Equal(action, parsed.Action);
+    }
+
+    [Theory]
+    [InlineData("""{"kind":"daily"}""", "time is required")]
+    [InlineData("""{"kind":"every","every_minutes":2}""", "5")]
+    [InlineData("""{"kind":"weekly","time":"08:00"}""", "weekly needs days")]
+    [InlineData("""{"kind":"cron","cron":"not a cron"}""", "cron")]
+    public void Routines_with_schedules_that_dont_add_up_are_rejected(string schedule, string reason)
+    {
+        var parsed = ActionParser.Parse($$"""{"type":"routine","name":"Briefing","prompt":"Brief me.","schedule":{{schedule}}}""");
+
+        Assert.False(parsed.IsValid);
+        Assert.Equal("routine", parsed.Name);
+        Assert.Contains(reason, parsed.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

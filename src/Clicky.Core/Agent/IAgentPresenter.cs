@@ -17,7 +17,7 @@ public interface IAgentCard : IPermissionPrompter, IDisposable
     /// <summary>Cancelled when the user presses Stop.</summary>
     CancellationToken StopRequested { get; }
 
-    /// <summary>Shows what the agent is doing now: "Step 3: Click "Save"".</summary>
+    /// <summary>Shows what the agent is doing now: "Step 3: Click "Save"". Number 0 shows the text alone.</summary>
     void ShowStep(int number, string text);
 
     /// <summary>
