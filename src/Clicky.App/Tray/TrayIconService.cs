@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
 using Clicky.App.Annotations;
+using Clicky.App.Ink;
 using Clicky.Core.Buddy;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
@@ -10,7 +11,7 @@ using H.NotifyIcon.Core;
 namespace Clicky.App.Tray;
 
 /// <summary>Owns the notification-area icon. Create, show and dispose on the UI thread.</summary>
-public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo) : IDisposable
+public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo, InkTrailDemo inkTrailDemo) : IDisposable
 {
     private TaskbarIcon? _icon;
 
@@ -82,6 +83,11 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
         var drawingDemo = new MenuItem { Header = "Drawing demo (preview)" };
         drawingDemo.Click += (_, _) => annotationDemo.Play();
         menu.Items.Add(drawingDemo);
+
+        // Until the talk loop (M6) records the pointer during Talk, this runs the same steps without the voice.
+        var inkTest = new MenuItem { Header = "Ink trail test (preview)" };
+        inkTest.Click += (_, _) => inkTrailDemo.Play();
+        menu.Items.Add(inkTest);
 
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Quit Clicky", Command = viewModel.QuitCommand });
