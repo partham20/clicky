@@ -1,9 +1,11 @@
 using System.Net.Http;
 using System.Windows.Threading;
+using Clicky.App.Annotations;
 using Clicky.App.Buddy;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Annotations;
 using Clicky.Core.Assistant;
 using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
@@ -138,6 +140,12 @@ internal static class ServiceCollectionExtensions
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
+
+        // M7 marks: safe to resolve on any thread; the overlay host is only touched on the UI thread.
+        services.AddSingleton(sp => new Lazy<OverlayHost>(sp.GetRequiredService<OverlayHost>));
+        services.AddSingleton<AnnotationRenderer>();
+        services.AddSingleton<IAnnotationRenderer>(sp => sp.GetRequiredService<AnnotationRenderer>());
+        services.AddSingleton<AnnotationDemo>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();

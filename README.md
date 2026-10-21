@@ -121,6 +121,15 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
 - **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
 
+## Point, highlight and draw (M7)
+
+`IAnnotationRenderer.Show(action, capture.Geometry)` puts a point, highlight, draw or step action on the overlays in a hand-drawn marker style: a pointer flies from the buddy (or from the previous pointer) to its spot and rings it, boxes and shapes draw themselves in with a slight wobble and overshoot, and labels pop up beside them in a handwriting font. Marks hold for 8 s (pointer), 10 s (shapes) or 60 s (steps) after drawing, then fade; `AnnotationOptions.Hold` overrides that, and `DismissAll()` clears the screen for the next question. Only one pointer shows at a time and at most 12 marks.
+
+- The wobble is pure geometry in `Clicky.Core/Annotations` (`RoughSketch`, seeded, so it is testable and steady while animating); the planner maps screenshot pixels to physical pixels and refuses off-screen coordinates; `AnnotationBoard` and `AnnotationTimeline` decide what animates when.
+- Frames are rendered only while something flies, draws in or fades; a still mark costs nothing but a one-shot timer for its fade, and only monitors with ink on them are redrawn.
+- The overlays stay visible while any mark is up, even with the floating cursor hidden.
+- Tray › Drawing demo (preview) plays every kind of mark on the monitor under the pointer.
+
 ## Memory (M11)
 
 Two Markdown files in `%AppData%\Clicky\memory`, both plain text you can edit in Settings › Memory or any editor:
