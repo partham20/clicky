@@ -3,6 +3,7 @@ using Clicky.Core.Actions;
 using Clicky.Core.Annotations;
 using Clicky.Core.Assistant;
 using Clicky.Core.Geometry;
+using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -29,6 +30,7 @@ public sealed class TalkLoop : IDisposable
     private readonly IClaudeAssistant _assistant;
     private readonly IMemoryService _memory;
     private readonly IAnnotationRenderer _annotations;
+    private readonly IInkTrailService _ink;
     private readonly IComputerAgent? _agent;
     private readonly ILogger<TalkLoop> _logger;
     private readonly TimeProvider _time;
@@ -43,6 +45,7 @@ public sealed class TalkLoop : IDisposable
         IClaudeAssistant assistant,
         IMemoryService memory,
         IAnnotationRenderer annotations,
+        IInkTrailService ink,
         ILogger<TalkLoop> logger,
         IComputerAgent? agent = null,
         TimeProvider? time = null)
@@ -50,6 +53,7 @@ public sealed class TalkLoop : IDisposable
         _assistant = assistant;
         _memory = memory;
         _annotations = annotations;
+        _ink = ink;
         _logger = logger;
         _agent = agent;
         _time = time ?? TimeProvider.System;
@@ -198,7 +202,7 @@ public sealed class TalkLoop : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
 
         var conversation = _assistant.CurrentConversation(memory);
-        var screenshot = ToScreenshot(question);
+        var screenshot = await WithInkAsync(ToScreenshot(question), question.Ink, cancellationToken).ConfigureAwait(false);
         var request = new ClaudeRequest(question.Text, question.Source, screenshot);
         var answer = new Answer(beginReply, screenshot?.Geometry);
 
@@ -321,6 +325,25 @@ public sealed class TalkLoop : IDisposable
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             _logger.LogWarning(ex, "Talk: could not queue the exchange for memory");
+        }
+    }
+
+    /// <summary>Paints and describes the pointer's trail on the screenshot (M9); without it if that fails.</summary>
+    private async Task<RequestScreenshot?> WithInkAsync(RequestScreenshot? screenshot, InkTrail? trail, CancellationToken cancellationToken)
+    {
+        if (screenshot is null || trail is null || trail.IsEmpty)
+        {
+            return screenshot;
+        }
+
+        try
+        {
+            return await _ink.AttachAsync(screenshot, trail, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
+        {
+            _logger.LogWarning(ex, "Talk: could not attach the ink trail; asking without it");
+            return screenshot;
         }
     }
 

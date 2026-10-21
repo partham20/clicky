@@ -3,6 +3,7 @@ using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Ink;
 using Clicky.Core.Assistant;
 using Clicky.Core.Settings;
 using Clicky.Core.Talk;
@@ -28,6 +29,7 @@ internal sealed class HotkeyCoordinator(
     VoiceInput voice,
     VoiceOutput speech,
     TalkLoop talkLoop,
+    IInkTrailService ink,
     TalkAnswerer answerer,
     IBuddyPresence presence,
     ISettingsStore settings,
@@ -48,6 +50,7 @@ internal sealed class HotkeyCoordinator(
     private VoiceSession? _talk;
     private Task<CaptureResult?> _capture = Task.FromResult<CaptureResult?>(null);
     private PixelPoint? _cursor;
+    private IInkRecording? _inkRecording;
 
     // Also read on the capture thread (level) and by completions on the thread pool.
     private volatile bool _talkArmed;
@@ -65,6 +68,7 @@ internal sealed class HotkeyCoordinator(
         hotkeys.Triggered -= OnHotkey;
         await _stopping.CancelAsync();
         _talk?.Cancel();
+        _inkRecording?.Cancel();
         talkLoop.Cancel();
     }
 
@@ -98,11 +102,17 @@ internal sealed class HotkeyCoordinator(
                 // The pointer where the user was looking when they pressed, not where it is when the capture runs.
                 _cursor = CursorReader.TryGet(out var position, out _) ? position : null;
                 _capture = CaptureForTalkAsync(new CaptureTarget(settings.Current.Capture.Mode, _cursor));
+
+                // M9: what the pointer does while the user talks ("this one", circling) goes with the question.
+                _inkRecording?.Cancel();
+                _inkRecording = ink.Start();
                 break;
 
             case (HotkeyAction.Talk, HotkeyPhase.Cancelled):
                 _talk?.Cancel();
                 _talk = null;
+                _inkRecording?.Cancel();
+                _inkRecording = null;
                 if (_talkArmed)
                 {
                     _talkArmed = false;
@@ -115,6 +125,8 @@ internal sealed class HotkeyCoordinator(
             case (HotkeyAction.Talk, HotkeyPhase.Ended):
                 var session = _talk;
                 _talk = null;
+                var trail = _inkRecording?.Finish();
+                _inkRecording = null;
                 _talkArmed = false;
                 presence.SetLevel(0);
                 if (session is null)
@@ -124,7 +136,7 @@ internal sealed class HotkeyCoordinator(
                 }
 
                 presence.SetState(BuddyState.Thinking);
-                _ = FinishTalkAsync(session, Volatile.Read(ref _talkGeneration), _capture, _cursor);
+                _ = FinishTalkAsync(session, Volatile.Read(ref _talkGeneration), _capture, _cursor, trail);
                 break;
 
             case (HotkeyAction.OpenHome, HotkeyPhase.Fired):
@@ -163,7 +175,7 @@ internal sealed class HotkeyCoordinator(
         _talk = session;
     }
 
-    private async Task FinishTalkAsync(VoiceSession session, int generation, Task<CaptureResult?> screenshot, PixelPoint? cursor)
+    private async Task FinishTalkAsync(VoiceSession session, int generation, Task<CaptureResult?> screenshot, PixelPoint? cursor, InkTrail? trail)
     {
         VoiceResult result;
         try
@@ -194,7 +206,7 @@ internal sealed class HotkeyCoordinator(
                     return;
                 }
 
-                await answerer.AskAsync(new TalkQuestion(result.Text, RequestSource.Voice, shot, cursor), _stopping.Token).ConfigureAwait(false);
+                await answerer.AskAsync(new TalkQuestion(result.Text, RequestSource.Voice, shot, cursor, trail), _stopping.Token).ConfigureAwait(false);
                 break;
 
             case VoiceOutcome.Failed:

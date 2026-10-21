@@ -161,6 +161,7 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<IClaudeAssistant>(),
             sp.GetRequiredService<IMemoryService>(),
             sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<IInkTrailService>(),
             sp.GetRequiredService<ILogger<TalkLoop>>(),
             sp.GetService<IComputerAgent>()));
         services.AddSingleton<TalkAnswerer>();

@@ -1,6 +1,7 @@
 using Clicky.Core.Assistant;
 using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
+using Clicky.Core.Ink;
 
 namespace Clicky.Core.Talk;
 
@@ -45,7 +46,8 @@ public interface IComputerAgent
 /// <param name="Text">What the user said (transcript) or typed.</param>
 /// <param name="Capture">The screenshot taken when they asked; null if capture failed.</param>
 /// <param name="Cursor">Where the pointer was when they asked, in physical pixels.</param>
-public sealed record TalkQuestion(string Text, RequestSource Source, CaptureResult? Capture = null, PixelPoint? Cursor = null);
+/// <param name="Ink">The pointer's trail while they talked (M9), attached to the screenshot as spatial context.</param>
+public sealed record TalkQuestion(string Text, RequestSource Source, CaptureResult? Capture = null, PixelPoint? Cursor = null, InkTrail? Ink = null);
 
 public enum TalkOutcome
 {

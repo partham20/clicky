@@ -4,6 +4,7 @@ using Clicky.Core.Annotations;
 using Clicky.Core.Assistant;
 using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
+using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Talk;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -19,11 +20,12 @@ public sealed class TalkLoopTests : IDisposable
     private readonly FakeAssistant _assistant = new();
     private readonly FakeMemory _memory = new();
     private readonly FakeAnnotations _annotations = new();
+    private readonly FakeInk _ink = new();
     private readonly List<FakeReply> _replies = [];
     private FakeAgent? _agent;
     private TalkLoop? _loop;
 
-    private TalkLoop Loop => _loop ??= new TalkLoop(_assistant, _memory, _annotations, NullLogger<TalkLoop>.Instance, _agent);
+    private TalkLoop Loop => _loop ??= new TalkLoop(_assistant, _memory, _annotations, _ink, NullLogger<TalkLoop>.Instance, _agent);
 
     public void Dispose() => _loop?.Dispose();
 
@@ -85,6 +87,25 @@ public sealed class TalkLoopTests : IDisposable
         _assistant.Script = (_, _, _) => Events(Completed(ReplyStop.EndTurn));
         await Loop.AnswerAsync(Question("again", new PixelPoint(5, 5)), Begin);
         Assert.Null(_assistant.Requests[1].Screenshot!.Cursor);
+    }
+
+    [Fact]
+    public async Task Ink_trail_goes_onto_the_screenshot_and_a_failure_to_paint_it_is_not_fatal()
+    {
+        _assistant.Script = (_, _, _) => Events(Completed(ReplyStop.EndTurn));
+        var trail = new InkTrail([new InkSample(new PixelPoint(-2000, 100), TimeSpan.Zero), new InkSample(new PixelPoint(-1000, 900), TimeSpan.FromSeconds(1))], TimeSpan.FromSeconds(1));
+
+        await Loop.AnswerAsync(Question("this one") with { Ink = trail }, Begin);
+        Assert.Same(trail, _ink.Attached.Single());
+        Assert.Equal([9, 9], _assistant.Requests[0].Screenshot!.Png);
+
+        // No movement, no work; a painting failure still asks with the plain screenshot.
+        await Loop.AnswerAsync(Question("no ink") with { Ink = InkTrail.Empty }, Begin);
+        _ink.Fail = true;
+        var result = await Loop.AnswerAsync(Question("broken ink") with { Ink = trail }, Begin);
+        Assert.Single(_ink.Attached);
+        Assert.Equal(TalkOutcome.Answered, result.Outcome);
+        Assert.Equal([1, 2, 3], _assistant.Requests[2].Screenshot!.Png);
     }
 
     [Fact]
@@ -401,6 +422,26 @@ public sealed class TalkLoopTests : IDisposable
             public void Dismiss()
             {
             }
+        }
+    }
+
+    private sealed class FakeInk : IInkTrailService
+    {
+        public List<InkTrail> Attached { get; } = [];
+
+        public bool Fail { get; set; }
+
+        public IInkRecording Start() => throw new NotSupportedException();
+
+        public Task<RequestScreenshot> AttachAsync(RequestScreenshot screenshot, InkTrail trail, CancellationToken cancellationToken = default)
+        {
+            if (Fail)
+            {
+                throw new InvalidOperationException("codec gone");
+            }
+
+            Attached.Add(trail);
+            return Task.FromResult(screenshot with { Png = [9, 9] });
         }
     }
 
