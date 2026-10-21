@@ -62,4 +62,10 @@ public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, 
 
 /// <param name="Text">What the user said or typed.</param>
 /// <param name="Tier">Forces the fast or deep model; null lets the router decide.</param>
-public sealed record ClaudeRequest(string Text, RequestSource Source, RequestScreenshot? Screenshot = null, ModelTier? Tier = null);
+/// <param name="Attachments">Documents and pictures to read with the question (text mode, M10); see <see cref="RequestAttachment"/>.</param>
+public sealed record ClaudeRequest(
+    string Text,
+    RequestSource Source,
+    RequestScreenshot? Screenshot = null,
+    ModelTier? Tier = null,
+    IReadOnlyList<RequestAttachment>? Attachments = null);

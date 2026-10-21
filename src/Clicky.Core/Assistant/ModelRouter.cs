@@ -10,7 +10,7 @@ public readonly record struct RouteDecision(ModelTier Tier, string Reason);
 /// Picks the fast or deep model for a question. Rules, not a model call: a classifier request would
 /// add a round trip to every voice question, which is the latency the fast model exists to avoid.
 /// Quick spoken questions ("where's the share button?") go fast; asking for an explanation, a
-/// walkthrough, a fix, writing, long typed questions and agent work go deep.
+/// walkthrough, a fix, writing, long typed questions, attached documents and agent work go deep.
 /// </summary>
 public static partial class ModelRouter
 {
@@ -35,6 +35,12 @@ public static partial class ModelRouter
         if (request.Source == RequestSource.Agent)
         {
             return new(ModelTier.Deep, "agent");
+        }
+
+        // Reading a whole document well is deep-model work, and its tokens dwarf the latency difference.
+        if (request.Attachments?.Any(a => a.Kind == AttachmentKind.Document) == true)
+        {
+            return new(ModelTier.Deep, "document");
         }
 
         var text = request.Text ?? string.Empty;

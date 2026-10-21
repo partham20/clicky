@@ -10,6 +10,8 @@
     <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="ModelContextProtocol.Core" />
+    <!-- M10: PDF text, pure managed. -->
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
 
   <ItemGroup>
