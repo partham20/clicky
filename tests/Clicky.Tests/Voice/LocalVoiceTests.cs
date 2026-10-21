@@ -98,12 +98,98 @@ public sealed class LocalVoiceTests : IDisposable
         Assert.Equal((language, lexicon), LocalVoiceModels.LanguageOf(voice));
 
     [Theory]
-    [InlineData(0, 16, 4)]
-    [InlineData(0, 6, 3)]
-    [InlineData(0, 1, 1)]
+    [InlineData(0, 6, 6)]
+    [InlineData(0, 12, 8)]
+    [InlineData(0, 0, 1)]
     [InlineData(6, 4, 6)]
-    public void Threads_default_to_half_the_cores_at_most_four(int setting, int processors, int expected) =>
-        Assert.Equal(expected, LocalTextToSpeech.ThreadsFor(setting, processors));
+    [InlineData(12, 4, 12)]
+    public void Threads_default_to_one_per_performance_core_at_most_eight(int setting, int performanceCores, int expected) =>
+        Assert.Equal(expected, LocalTextToSpeech.ThreadsFor(setting, performanceCores));
+
+    [Fact]
+    public async Task The_processor_setting_round_trips_and_defaults_to_the_cpu()
+    {
+        Assert.Equal(LocalVoiceProcessor.Cpu, new SpeechSettings().LocalProcessor);
+        Assert.Equal(LocalVoiceProcessor.Cpu, (new SpeechSettings() with { LocalProcessor = (LocalVoiceProcessor)42 }).Normalize().LocalProcessor);
+        Assert.NotEqual(new SpeechSettings(), new SpeechSettings() with { LocalProcessor = LocalVoiceProcessor.NvidiaGpu });
+
+        var file = Path.Combine(_directory, "settings.json");
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(file, """{ "speech": { "engine": "Local", "localProcessor": "NvidiaGpu", "localThreads": 6 } }""");
+        using var store = JsonSettingsStore.Open(file, NullLogger<JsonSettingsStore>.Instance);
+
+        Assert.Equal(LocalVoiceProcessor.NvidiaGpu, store.Current.Speech.LocalProcessor);
+        Assert.Equal(6, store.Current.Speech.LocalThreads);
+    }
+
+    [Fact]
+    public void The_gpu_check_is_remembered_until_forgotten()
+    {
+        Directory.CreateDirectory(_directory);
+        Assert.Null(LocalVoiceGpu.ReadCheck(_directory));
+
+        LocalVoiceGpu.WriteCheck(_directory, new LocalVoiceGpuCheck(false, "Not found on this PC:\r\ncuDNN 9."));
+        Assert.Equal(new LocalVoiceGpuCheck(false, "Not found on this PC: cuDNN 9."), LocalVoiceGpu.ReadCheck(_directory));
+
+        LocalVoiceGpu.WriteCheck(_directory, new LocalVoiceGpuCheck(true, "Works: 90 ms"));
+        Assert.Equal(new LocalVoiceGpuCheck(true, "Works: 90 ms"), LocalVoiceGpu.ReadCheck(_directory));
+
+        LocalVoiceGpu.ForgetCheck(_directory);
+        Assert.Null(LocalVoiceGpu.ReadCheck(_directory));
+    }
+
+    [Fact]
+    public void The_gpu_runtime_keeps_only_the_dlls_it_needs()
+    {
+        var map = LocalVoiceModels.CudaRuntime.MapEntry;
+
+        Assert.Equal("sherpa-onnx-c-api.dll", map("lib/sherpa-onnx-c-api.dll"));
+        Assert.Equal("onnxruntime_providers_cuda.dll", map("lib/onnxruntime_providers_cuda.dll"));
+        Assert.Null(map("bin/onnxruntime_providers_cuda.dll"));
+        Assert.Null(map("lib/onnxruntime_providers_tensorrt.dll"));
+        Assert.Null(map("lib/cargs.dll"));
+        Assert.Null(map("bin/sherpa-onnx-offline-tts.exe"));
+        Assert.Equal(LocalVoiceGpu.RuntimeFiles, LocalVoiceModels.CudaRuntime.RequiredFiles);
+        Assert.StartsWith("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/", LocalVoiceModels.CudaRuntime.DownloadUri.AbsoluteUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_mapped_download_unpacks_only_what_the_map_keeps()
+    {
+        var archive = Archive(("rt/", null), ("rt/bin/", null), ("rt/bin/a.dll", "big"), ("rt/lib/", null), ("rt/lib/a.dll", "a"), ("rt/lib/b.dll", "b"), ("rt/lib/c.dll", "c"));
+        var model = FakeModel(archive) with
+        {
+            RequiredFiles = ["a.dll", "b.dll"],
+            MapEntry = path => path is "lib/a.dll" or "lib/b.dll" ? path[4..] : null,
+        };
+        using var http = new HttpClient(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) }));
+        using var downloader = new LocalVoiceDownloader(http, _directory, NullLogger<LocalVoiceDownloader>.Instance);
+
+        var path = await downloader.EnsureAsync(model);
+
+        Assert.True(downloader.IsAvailable(model));
+        Assert.Equal(["a.dll", "b.dll"], Directory.EnumerateFileSystemEntries(path).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Equal("a", await File.ReadAllTextAsync(Path.Combine(path, "a.dll")));
+    }
+
+    [Fact]
+    public async Task Without_a_gpu_check_the_voice_stays_on_the_cpu_and_says_why()
+    {
+        var folder = Folder("bad", "readme.txt");
+        using var http = new HttpClient(new FakeHandler(_ => throw new InvalidOperationException("no downloads")));
+        using var downloader = new LocalVoiceDownloader(http, _directory, NullLogger<LocalVoiceDownloader>.Instance);
+        var settings = new FakeSettingsStore(ClickySettings.Default with
+        {
+            Speech = new SpeechSettings(Engine: VoiceOutputEngine.Local, LocalModelPath: folder) with { LocalProcessor = LocalVoiceProcessor.NvidiaGpu },
+        });
+        using var tts = new LocalTextToSpeech(downloader, settings, NullLogger<LocalTextToSpeech>.Instance, new FixedCpu(5));
+
+        await Assert.ThrowsAsync<TextToSpeechException>(() => tts.SynthesizeAsync("Hi.", default));
+
+        Assert.False(tts.OnGpu);
+        Assert.Equal(5, tts.Threads);
+        Assert.True(tts.PrefersShortChunks);
+    }
 
     [Fact]
     public void Model_folders_are_recognized_by_their_files()
@@ -259,6 +345,12 @@ public sealed class LocalVoiceTests : IDisposable
         Assert.True(clip.Elapsed < clip.Duration * 2, $"{clip.Elapsed.TotalMilliseconds:0} ms for {clip.Duration.TotalSeconds:0.00} s");
         Console.WriteLine($"Local voice: {clip.Elapsed.TotalMilliseconds:0} ms for {clip.Duration.TotalSeconds:0.00} s of speech");
 
+        // What the first sound of a reply waits for: just its first chunk.
+        var first = SpeechChunker.Split("Sure, the Save button is in the top right corner.", first: true)[0];
+        var firstClip = await tts.SynthesizeAsync(first.Text, new SpeechRequest(string.Empty, 1.0));
+        Assert.True(firstClip.Duration > TimeSpan.Zero);
+        Console.WriteLine($"Local voice first chunk \"{first.Text}\": {firstClip.Elapsed.TotalMilliseconds:0} ms on {tts.Threads} threads");
+
         using var cancel = new CancellationTokenSource();
         var cancelled = tts.SynthesizeAsync("This one is cancelled while the voice is still working on it, which must not break the next.", new SpeechRequest(string.Empty, 1.0), cancel.Token);
         await cancel.CancelAsync();
@@ -311,6 +403,13 @@ public sealed class LocalVoiceTests : IDisposable
         }
 
         return folder;
+    }
+
+    private sealed class FixedCpu(int cores) : ICpuPerformance
+    {
+        public int PerformanceCores => cores;
+
+        public IDisposable Boost() => new MemoryStream();
     }
 
     private sealed class SyncProgress<T>(Action<T> report) : IProgress<T>

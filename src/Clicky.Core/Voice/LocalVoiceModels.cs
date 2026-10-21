@@ -10,6 +10,7 @@ public sealed record LocalVoice(string Id, int Speaker, string Name, string Lang
     public string Label => $"{Name} ({(Female ? "female" : "male")}, {Language})";
 }
 
+/// <summary>A download Clicky unpacks into a folder of its own: a voice model, or the GPU runtime.</summary>
 /// <param name="Name">Name used in settings.json and as the folder name, e.g. "kokoro-multi-lang-v1_0".</param>
 /// <param name="Title">Display name.</param>
 /// <param name="Size">Exact size of the archive in bytes.</param>
@@ -18,8 +19,17 @@ public sealed record LocalVoice(string Id, int Speaker, string Name, string Lang
 /// <param name="Voices">Voices offered in Settings, best first.</param>
 public sealed record LocalVoiceModel(string Name, string Title, long Size, string Sha256, long ExtractedSize, IReadOnlyList<LocalVoice> Voices)
 {
-    /// <summary>Where the archive is downloaded from: sherpa-onnx's model releases on GitHub.</summary>
-    public Uri DownloadUri => new($"https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/{Name}.tar.bz2");
+    /// <summary>Where the archive is downloaded from: sherpa-onnx's model releases on GitHub by default.</summary>
+    public Uri DownloadUri { get; init; } = new($"https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/{Name}.tar.bz2");
+
+    /// <summary>Files the unpacked folder must have; checked before it counts as downloaded.</summary>
+    public IReadOnlyList<string> RequiredFiles { get; init; } = ["model.onnx", "voices.bin", "tokens.txt"];
+
+    /// <summary>
+    /// Where an archive entry goes, given its path below the archive's top folder ('/'-separated);
+    /// null skips it. Everything is kept by default.
+    /// </summary>
+    public Func<string, string?> MapEntry { get; init; } = path => path;
 
     public string SizeText => $"{Size / 1_000_000.0:0} MB";
 
@@ -83,6 +93,25 @@ public static class LocalVoiceModels
         ]);
 
     public static IReadOnlyList<LocalVoiceModel> All { get; } = [Kokoro];
+
+    /// <summary>
+    /// sherpa-onnx built against ONNX Runtime 1.28.2 with CUDA 12: the four DLLs of its lib folder
+    /// (595 MB download, 515 MB unpacked, nearly all of it the CUDA provider). Needs an NVIDIA
+    /// driver, the CUDA 12 runtime and cuDNN 9 installed on the PC; Clicky checks them in a separate
+    /// process before using it (see <see cref="LocalVoiceGpu"/>).
+    /// </summary>
+    public static LocalVoiceModel CudaRuntime { get; } = new(
+        "sherpa-onnx-v1.13.8-cuda12",
+        "NVIDIA GPU runtime (CUDA 12)",
+        595_017_373,
+        "066c5b54dbafaa1388001a9c9837ac1374dbba6d6678f193ca06aa0d8e94d8c3",
+        515_000_000,
+        [])
+    {
+        DownloadUri = new("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda.tar.bz2"),
+        RequiredFiles = LocalVoiceGpu.RuntimeFiles,
+        MapEntry = path => path.StartsWith("lib/", StringComparison.Ordinal) && LocalVoiceGpu.RuntimeFiles.Contains(path[4..]) ? path[4..] : null,
+    };
 
     /// <summary>Every speaker of Kokoro v1.0, by number, for names that are not in <see cref="LocalVoiceModel.Voices"/>.</summary>
     internal static string[] KokoroSpeakers { get; } =

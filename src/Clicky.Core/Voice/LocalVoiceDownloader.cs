@@ -23,9 +23,6 @@ public sealed class LocalVoiceDownloader(HttpClient http, string directory, ILog
 {
     private const int BufferSize = 1 << 20;
 
-    // Files every Kokoro folder has; checked before a folder counts as a model.
-    private static readonly string[] RequiredFiles = ["model.onnx", "voices.bin", "tokens.txt"];
-
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public string Directory => directory;
@@ -41,7 +38,7 @@ public sealed class LocalVoiceDownloader(HttpClient http, string directory, ILog
     public bool IsAvailable(LocalVoiceModel model)
     {
         var path = PathOf(model);
-        return RequiredFiles.All(f => File.Exists(Path.Combine(path, f)));
+        return model.RequiredFiles.All(f => File.Exists(Path.Combine(path, f)));
     }
 
     /// <summary>Returns the model's folder, downloading and unpacking it first if needed. One download at a time.</summary>
@@ -74,7 +71,7 @@ public sealed class LocalVoiceDownloader(HttpClient http, string directory, ILog
     /// Unpacks a .tar.bz2 into <paramref name="target"/>, refusing entries that would land outside
     /// it, and links. The archive's single top-level folder (sherpa-onnx archives have one) is dropped.
     /// </summary>
-    internal static async Task ExtractAsync(Stream archive, string target, CancellationToken cancellationToken)
+    internal static async Task ExtractAsync(Stream archive, string target, CancellationToken cancellationToken, Func<string, string?>? map = null)
     {
         var root = Path.GetFullPath(target) + Path.DirectorySeparatorChar;
         System.IO.Directory.CreateDirectory(root);
@@ -90,7 +87,12 @@ public sealed class LocalVoiceDownloader(HttpClient http, string directory, ILog
 
             var slash = name.IndexOf('/', StringComparison.Ordinal);
             var relative = slash < 0 ? string.Empty : name[(slash + 1)..];
-            if (relative.Length == 0)
+            if (relative.Length > 0 && map is not null && entry.EntryType != TarEntryType.Directory)
+            {
+                relative = map(relative) ?? string.Empty;
+            }
+
+            if (relative.Length == 0 || (map is not null && entry.EntryType == TarEntryType.Directory))
             {
                 continue;
             }
@@ -136,10 +138,10 @@ public sealed class LocalVoiceDownloader(HttpClient http, string directory, ILog
             var stream = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, useAsync: true);
             await using (stream.ConfigureAwait(false))
             {
-                await ExtractAsync(stream, unpacking, cancellationToken).ConfigureAwait(false);
+                await ExtractAsync(stream, unpacking, cancellationToken, model.MapEntry).ConfigureAwait(false);
             }
 
-            var missing = RequiredFiles.FirstOrDefault(f => !File.Exists(Path.Combine(unpacking, f)));
+            var missing = model.RequiredFiles.FirstOrDefault(f => !File.Exists(Path.Combine(unpacking, f)));
             if (missing is not null)
             {
                 throw new TextToSpeechException($"The voice model {model.Name} has no {missing}; the download was discarded.");

@@ -45,6 +45,9 @@ public sealed class VoiceOutput : IDisposable
     /// <summary>Pause between two sentences; synthesized clips have their own silence trimmed off.</summary>
     public static readonly TimeSpan SentenceGap = TimeSpan.FromMilliseconds(180);
 
+    /// <summary>Pause where an engine's sentence was cut at a comma (see <see cref="SpeechChunker"/>).</summary>
+    public static readonly TimeSpan ClauseGap = TimeSpan.FromMilliseconds(90);
+
     /// <summary>
     /// After the last sample has gone to the device, it still has to come out of the speakers
     /// (device buffer plus driver latency); closing the stream at once would clip the last syllable.
@@ -177,6 +180,9 @@ public sealed class VoiceOutput : IDisposable
         }
 
         _ = ExpireAsync(warm);
+
+        // The voice too: a model paged out while idle costs more than the speaker does.
+        Engines(settings.Engine).Prepare();
     }
 
     /// <summary>Gets the configured voice ready. Never throws.</summary>
@@ -268,10 +274,11 @@ public sealed class SpokenReply : ITalkReply, IDisposable
     private readonly Lock _gate = new();
     private readonly StringBuilder _text = new();
     private readonly SentenceSplitter _splitter = new();
-    private readonly Channel<string> _sentences = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<SpeechChunk> _sentences = Channel.CreateUnbounded<SpeechChunk>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _cancel = new();
     private readonly TaskCompletionSource<ReplyResult> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly long _begunAt;
+    private readonly bool _chunked;
 
     private ISpeakerSession? _stream;
     private int _sentenceCount;
@@ -286,6 +293,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
         _quietDetail = quietDetail;
         Quiet = quiet;
         _begunAt = owner.Time.GetTimestamp();
+        _chunked = quiet == QuietReasons.None && owner.Engines(settings.Engine).PrefersShortChunks;
     }
 
     /// <summary>A sentence (as spoken, cleaned) started playing. Raised on a pool or audio thread.</summary>
@@ -408,12 +416,22 @@ public sealed class SpokenReply : ITalkReply, IDisposable
                 continue;
             }
 
-            if (_sentenceCount++ == 0)
+            var first = _sentenceCount++ == 0;
+            if (first)
             {
                 _firstSentenceAt = _owner.Time.GetTimestamp();
             }
 
-            _sentences.Writer.TryWrite(spoken);
+            if (!_chunked)
+            {
+                _sentences.Writer.TryWrite(new SpeechChunk(spoken, false));
+                continue;
+            }
+
+            foreach (var chunk in SpeechChunker.Split(spoken, first))
+            {
+                _sentences.Writer.TryWrite(chunk);
+            }
         }
     }
 
@@ -428,7 +446,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
         var opening = Task.Run(() => _owner.OpenSpeakerAsync(_settings, token), CancellationToken.None);
         // Look-ahead: one sentence playing, one queued behind it, one ready and one being synthesized.
         // Enough to keep the voice going, little enough that barge-in wastes almost nothing.
-        var clips = Channel.CreateBounded<(string Text, SpeechClip Clip)>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });
+        var clips = Channel.CreateBounded<(SpeechChunk Chunk, SpeechClip Clip)>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });
         var synthesis = Task.Run(() => SynthesizeAsync(engine, request, clips.Writer, token), CancellationToken.None);
 
         ReplyResult result;
@@ -447,7 +465,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
 
             var buffer = stream.Buffer;
             var previousStart = 0L;
-            await foreach (var (text, clip) in clips.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            await foreach (var (chunk, clip) in clips.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
                 // Queue this sentence once the one before it has started playing, not before.
                 if (played > 0)
@@ -459,7 +477,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
                 var samples = Resample(clip, buffer.SampleRate);
                 if (played > 0)
                 {
-                    buffer.WriteSilence(VoiceOutput.SentenceGap);
+                    buffer.WriteSilence(chunk.ContinuesSentence ? VoiceOutput.ClauseGap : VoiceOutput.SentenceGap);
                 }
 
                 var start = buffer.Written;
@@ -476,7 +494,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
                                 firstAudio = _owner.Time.GetElapsedTime(_firstSentenceAt);
                             }
 
-                            SentenceStarted?.Invoke(text);
+                            SentenceStarted?.Invoke(chunk.Text);
                         }
                     },
                     CancellationToken.None,
@@ -546,18 +564,28 @@ public sealed class SpokenReply : ITalkReply, IDisposable
         _completion.TrySetResult(result);
     }
 
-    private async Task SynthesizeAsync(ITextToSpeech engine, SpeechRequest request, ChannelWriter<(string, SpeechClip)> clips, CancellationToken token)
+    private async Task SynthesizeAsync(ITextToSpeech engine, SpeechRequest request, ChannelWriter<(SpeechChunk, SpeechClip)> clips, CancellationToken token)
     {
         Exception? error = null;
         try
         {
-            await foreach (var sentence in _sentences.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            await foreach (var chunk in _sentences.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
-                var clip = await engine.SynthesizeAsync(sentence, request, token).ConfigureAwait(false);
+                var clip = await engine.SynthesizeAsync(chunk.Text, request, token).ConfigureAwait(false);
+                if (_chunked)
+                {
+                    // Engines slow enough to chunk for are slow enough to want numbers for.
+                    _owner.Logger.LogInformation(
+                        "Speech: {Words} word(s) synthesized in {SynthMs:0} ms for {AudioMs:0} ms of audio",
+                        chunk.Text.Count(c => c == ' ') + 1,
+                        clip.Elapsed.TotalMilliseconds,
+                        clip.Duration.TotalMilliseconds);
+                }
+
                 clip = clip.TrimSilence();
                 if (clip.Samples.Length > 0)
                 {
-                    await clips.WriteAsync((sentence, clip), token).ConfigureAwait(false);
+                    await clips.WriteAsync((chunk, clip), token).ConfigureAwait(false);
                 }
             }
         }

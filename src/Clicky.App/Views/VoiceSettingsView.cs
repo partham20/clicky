@@ -29,6 +29,7 @@ internal sealed class VoiceSettingsView : ContentControl
     private readonly ComboBox _device = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly RadioButton _local = new() { Content = "On this PC (Whisper): free, offline, audio stays here", Margin = new Thickness(0, 2, 0, 2) };
     private readonly RadioButton _cloud = new() { Content = "Cloud (OpenAI): needs an API key, sends audio to OpenAI", Margin = new Thickness(0, 2, 0, 2) };
+    private readonly CheckBox _useGpu = new() { Content = "Use the graphics card for speech-to-text when there is one (applies on restart)", Margin = new Thickness(0, 4, 0, 0) };
     private readonly TextBox _language = new() { Width = 80, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly PasswordBox _key = new() { Width = 320 };
     private readonly TextBlock _keyStatus = new() { Opacity = 0.7, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -45,6 +46,7 @@ internal sealed class VoiceSettingsView : ContentControl
 
         _local.Checked += (_, _) => Save(v => v with { Engine = SpeechEngine.Local });
         _cloud.Checked += (_, _) => Save(v => v with { Engine = SpeechEngine.Cloud });
+        _useGpu.Click += (_, _) => Save(v => v with { UseGpu = _useGpu.IsChecked == true });
         _device.SelectionChanged += (_, _) =>
         {
             if (_device.SelectedItem is ComboBoxItem { Tag: string id })
@@ -99,6 +101,7 @@ internal sealed class VoiceSettingsView : ContentControl
         panel.Children.Add(_local);
         panel.Children.Add(_cloud);
         panel.Children.Add(_engineStatus);
+        panel.Children.Add(_useGpu);
 
         panel.Children.Add(Label("Language (en, hi, ta, … or auto)"));
         panel.Children.Add(_language);
@@ -126,6 +129,7 @@ internal sealed class VoiceSettingsView : ContentControl
         try
         {
             _local.IsChecked = voice.Engine == SpeechEngine.Local;
+            _useGpu.IsChecked = voice.UseGpu;
             _cloud.IsChecked = voice.Engine == SpeechEngine.Cloud;
             if (!_language.IsKeyboardFocused)
             {

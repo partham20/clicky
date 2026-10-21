@@ -7,8 +7,10 @@ using Clicky.App.Hosting;
 using Clicky.App.TextMode;
 using Clicky.App.Tray;
 using Clicky.Core;
+using Clicky.Core.Voice;
 using Clicky.Platform.Windows;
 using Clicky.Platform.Windows.Overlay;
+using Clicky.Platform.Windows.Power;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Startup;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,6 +28,14 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Child process checking the GPU voice (see LocalVoiceGpu): no Velopack, no single instance,
+        // no host, and no "stopped working" dialog if the CUDA runtime takes the process down.
+        if (args is [LocalVoiceGpu.ProbeSwitch, var runtimeFolder, var modelFolder])
+        {
+            ProcessErrorMode.SuppressCrashDialogs();
+            return LocalVoiceGpu.Probe(runtimeFolder, modelFolder, Console.Out);
+        }
+
         // First, before anything touches disk or UI: Velopack's install/update/uninstall hooks run
         // here and exit, and an update downloaded last session is applied (restarting into it).
         VelopackApp.Build()

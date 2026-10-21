@@ -67,7 +67,7 @@ internal sealed class VoiceStartup(
         a.Engine != b.Engine || a.LocalModel != b.LocalModel || a.CpuModel != b.CpuModel || a.Language != b.Language;
 
     private static bool AffectsLocalVoice(SpeechSettings a, SpeechSettings b) =>
-        a.LocalModel != b.LocalModel || a.LocalModelPath != b.LocalModelPath || a.LocalThreads != b.LocalThreads
+        a.LocalModel != b.LocalModel || a.LocalModelPath != b.LocalModelPath || a.LocalThreads != b.LocalThreads || a.LocalProcessor != b.LocalProcessor
         || LocalVoiceModels.LanguageOf(a.LocalVoice) != LocalVoiceModels.LanguageOf(b.LocalVoice);
 
     private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
@@ -158,9 +158,18 @@ internal sealed class VoiceStartup(
         if (progress is { Received: 0, Unpacking: false } started)
         {
             _downloadingVoice = started.Model;
-            notifier.Notify(
-                "Downloading the natural voice",
-                $"Clicky is downloading {started.Model.Title} ({started.Model.SizeText}) once, so replies can be spoken by a natural voice on this PC. Until then they show as text.");
+            if (started.Model == LocalVoiceModels.CudaRuntime)
+            {
+                notifier.Notify(
+                    "Downloading the GPU voice runtime",
+                    $"Clicky is downloading {started.Model.Title} ({started.Model.SizeText}) once. The voice stays on the CPU until Clicky restarts after it.");
+            }
+            else
+            {
+                notifier.Notify(
+                    "Downloading the natural voice",
+                    $"Clicky is downloading {started.Model.Title} ({started.Model.SizeText}) once, so replies can be spoken by a natural voice on this PC. Until then they show as text.");
+            }
         }
         else if (progress is null && _downloadingVoice is { } model)
         {
@@ -168,7 +177,11 @@ internal sealed class VoiceStartup(
             _downloadingVoice = null;
             if (voiceDownloader.IsAvailable(model))
             {
-                notifier.Notify("Natural voice ready", "Replies are spoken by the new voice from now on.");
+                notifier.Notify(
+                    model == LocalVoiceModels.CudaRuntime ? "GPU voice runtime ready" : "Natural voice ready",
+                    model == LocalVoiceModels.CudaRuntime
+                        ? "Restart Clicky (tray › Quit Clicky, then start it) to check the GPU and use it for the voice."
+                        : "Replies are spoken by the new voice from now on.");
             }
         }
     }
