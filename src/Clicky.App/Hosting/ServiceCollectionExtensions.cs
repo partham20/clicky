@@ -299,6 +299,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<TextModeController>();
         services.AddSingleton<DropPad>();
 
+        services.AddRoutines(paths);
+
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
         services.AddSingleton<TrayIconService>();

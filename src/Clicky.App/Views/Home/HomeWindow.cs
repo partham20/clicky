@@ -140,6 +140,9 @@ internal sealed class HomeWindow : Window
     /// <summary>Set by the shell: opens Settings.</summary>
     public Action? OpenSettings { get; set; }
 
+    /// <summary>The Routines button (M15).</summary>
+    public Action? OpenRoutines { get; set; }
+
     private static SolidColorBrush Frozen(byte r, byte g, byte b)
     {
         var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
@@ -255,11 +258,15 @@ internal sealed class HomeWindow : Window
         sidebar.Children.Add(heading);
 
         var settings = SmallButton("Settings");
-        settings.HorizontalAlignment = HorizontalAlignment.Left;
-        settings.Margin = new Thickness(16, 8, 16, 16);
+        settings.Margin = new Thickness(0);
         settings.Click += (_, _) => OpenSettings?.Invoke();
-        DockPanel.SetDock(settings, Dock.Bottom);
-        sidebar.Children.Add(settings);
+        var routines = SmallButton("Routines");
+        routines.ToolTip = "Things your Clickys do on a schedule";
+        routines.Margin = new Thickness(8, 0, 0, 0);
+        routines.Click += (_, _) => OpenRoutines?.Invoke();
+        var footer = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16, 8, 16, 16), Children = { settings, routines } };
+        DockPanel.SetDock(footer, Dock.Bottom);
+        sidebar.Children.Add(footer);
 
         _list.SelectionChanged += (_, _) =>
         {

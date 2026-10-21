@@ -47,6 +47,7 @@ internal sealed class AppShell(
         {
             var home = homeWindow();
             home.OpenSettings = ShowSettings;
+            home.OpenRoutines = () => ShowSettingsPage(SettingsPages.Agents.Id);
             return home;
         });
 
