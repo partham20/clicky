@@ -19,4 +19,6 @@ public interface ISecretStore
 public static class SecretNames
 {
     public const string OpenAiApiKey = "openai-api-key";
+
+    public const string AnthropicApiKey = "anthropic-api-key";
 }

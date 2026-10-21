@@ -4,10 +4,14 @@ using Clicky.App.Buddy;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Assistant;
+using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
@@ -17,6 +21,7 @@ using Clicky.Platform.Windows.Dictation;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
+using Clicky.Platform.Windows.Shell;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Speech;
 using Clicky.Platform.Windows.Startup;
@@ -92,6 +97,28 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();
 
+        // Claude: both backends stay registered so Settings can switch between them live.
+        services.AddSingleton<AnthropicApiBackend>();
+        services.AddSingleton<ClaudeCodeBackend>();
+        services.AddSingleton<ClaudeAssistant>();
+
+        // Memory updates run on the active backend's fast model.
+        services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
+        services.AddSingleton(sp => new MemoryStore(paths.MemoryDirectory, sp.GetRequiredService<ILogger<MemoryStore>>()));
+        services.AddSingleton(sp => new MemoryService(
+            sp.GetRequiredService<MemoryStore>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<ILogger<MemoryService>>(),
+            sp.GetService<IMemoryModel>()));
+        services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
+
+        // M16 connectors: backends and the agent loop take IConnectorTools.
+        services.AddSingleton<IBrowserLauncher, ShellBrowserLauncher>();
+        services.AddSingleton<ConnectorSecrets>();
+        services.AddSingleton<IMcpSessionFactory, SdkMcpSessionFactory>();
+        services.AddSingleton<ConnectorHub>();
+        services.AddSingleton<IConnectorTools>(sp => sp.GetRequiredService<ConnectorHub>());
+
         services.AddSingleton(sp => new PersonalVocabulary(paths.DictionaryFile, sp.GetRequiredService<ILogger<PersonalVocabulary>>()));
         services.AddSingleton(sp => new DictationHistory(paths, TimeProvider.System, sp.GetRequiredService<ILogger<DictationHistory>>()));
         services.AddSingleton<IDictationPolisher, RulesOnlyPolisher>();
@@ -118,6 +145,12 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
         services.AddTransient<SpeechSettingsView>();
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
+        services.AddTransient<ClaudeSettingsView>();
+        services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
+        services.AddTransient<MemorySettingsView>();
+        services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
+        services.AddTransient<ConnectorsSettingsView>();
+        services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
         services.AddTransient<DictationSettingsView>();
         services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
 
@@ -132,6 +165,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<ConnectorStartup>();
         services.AddHostedService<DictationCoordinator>();
 
         return services;
