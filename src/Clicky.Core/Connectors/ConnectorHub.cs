@@ -493,14 +493,17 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
         TaskCompletionSource signal;
         lock (_gate)
         {
-            var index = BuildIndex();
+            // One read of each status feeds both the index and _pending. Reading them separately
+            // could build the index before a connection turned Connected and see it settled after.
+            var statuses = _connections.ToDictionary(c => c.Key, c => c.Value.Status);
+            var index = BuildIndex(statuses);
             toolsChanged = !index.SameAs(_index);
             if (toolsChanged)
             {
                 Volatile.Write(ref _index, index);
             }
 
-            _pending = _starting || _connections.Values.Any(c => c.Status.IsPending);
+            _pending = _starting || statuses.Values.Any(s => s.IsPending);
             signal = _changed;
             _changed = NewSignal();
         }
@@ -535,7 +538,7 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
     }
 
     /// <summary>Must hold _gate.</summary>
-    private ToolIndex BuildIndex()
+    private ToolIndex BuildIndex(Dictionary<(string Connector, string Account), ConnectionStatus> statuses)
     {
         var tools = new List<ConnectorTool>();
         var byName = new Dictionary<string, (AccountConnection, ConnectorTool)>(StringComparer.Ordinal);
@@ -546,14 +549,16 @@ public sealed class ConnectorHub : IConnectorTools, IAsyncDisposable
             var disabled = config.DisabledTools.ToHashSet(StringComparer.Ordinal);
             foreach (var account in accounts)
             {
-                if (!_connections.TryGetValue((config.Id, account.Id), out var connection) || connection.Status.State != ConnectionState.Connected)
+                if (!_connections.TryGetValue((config.Id, account.Id), out var connection)
+                    || !statuses.TryGetValue((config.Id, account.Id), out var status)
+                    || status.State != ConnectionState.Connected)
                 {
                     continue;
                 }
 
                 var prefix = ConnectorNames.Prefix(config.Id, account.Id, multiple);
                 var label = multiple ? $"{config.Name} · {account.Label}" : config.Name;
-                foreach (var info in connection.Status.Tools)
+                foreach (var info in status.Tools)
                 {
                     if (disabled.Contains(info.Name))
                     {
