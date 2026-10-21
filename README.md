@@ -60,7 +60,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 | Open Home | Ctrl+Alt+A | |
 | Always-on voice | Triple-tap Ctrl | Off by default |
 
-Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk transcribes what you say (M3) and, until M6 sends it to Claude, says back what it heard (M4).
+Talk, Open Home and both dictation gestures (M12) work; the others are logged until their milestones. Talk sends what you say and a screenshot to Claude and speaks the answer (M6).
 
 Gesture text in settings: modifiers alone are a hold (`Ctrl+Alt`), modifiers plus a key are a press (`Ctrl+Alt+A`), and `double`/`triple` prefixes are taps (`double Ctrl`). `hold Ctrl+Space` holds a key. A modifier-only hold needs two modifiers, and a press needs a modifier unless the key is F13-F24, so a binding can't take over normal typing.
 
@@ -96,7 +96,7 @@ Hold Talk, speak, release: the buddy listens (its disc follows your voice), thin
 
 ## Voice output (M4)
 
-Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Until M6 connects Claude, Talk says back what it heard, and Settings › Speech has a Test voice button.
+Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Settings › Speech has a Test voice button.
 
 - **Streaming.** Text is cut into sentences as it streams in (`SentenceSplitter`): at ". ", "! ", "? " and line breaks, but not at "3.14", "v1.2", "docs.claude.com", "e.g.", "Dr.", initials or "1." list numbers. Markdown, links, code blocks, table pipes and emoji are stripped before speaking (`SpeakableText`). Each sentence is synthesized while the one before it plays and queued behind it with a 180 ms pause, so there are no gaps. The look-ahead stops at about two sentences, so barge-in wastes little.
 - **Windows voices** (default): WinRT `SpeechSynthesizer` with the voices installed in Windows, 15-30 ms a sentence once loaded at startup. Windows does not offer its newer natural Narrator voices to apps, so on most PCs these are the classic voices (David, Zira, Mark, Heera, Ravi, …). **Cloud**: OpenAI `gpt-4o-mini-tts`, natural voices, using the same Credential Manager key as cloud speech-to-text; it sends the reply text to OpenAI. The Claude API has no text-to-speech.
@@ -120,6 +120,18 @@ Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, bo
 - **Prompts** live as Markdown in `Clicky.Core/Prompts` (embedded). The system prompt never changes within a run, so it stays cached; memory is fixed per conversation.
 - **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
 - **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
+
+## Talk end to end (M6)
+
+Hold Ctrl+Alt, ask about what's on screen, let go: the buddy listens, thinks with your question as its caption, then answers out loud as the reply streams in, pointing at, boxing or drawing on what it talks about.
+
+- **Key down** (before the hold even arms): stops Clicky if it is speaking or still answering, fades the marks from the last answer, reads memory and gets the backend ready. On the subscription backend that starts Claude Code, so its 2-3 s start-up is over by the time you finish speaking.
+- **Armed**: the mic is already open; the screenshot is taken with the pointer position you had when you pressed.
+- **Release**: speech-to-text, then `TalkLoop` (Core) asks Claude with the transcript, the screenshot and where your pointer is on it. Text goes to the sentence speaker as it arrives; point, highlight, draw and step actions go to the overlays mapped through the screenshot's geometry; click, type and the other agent actions are left to the computer-use agent (M13), which takes over in the same reply when it is installed (`IComputerAgent`). A capture that fails or takes over 3 s doesn't stop the question; it goes without a screenshot.
+- **Memory**: memory is part of the system prompt, fixed for the conversation so the prompt cache keeps hitting, except that feedback ("you talk too much") updates it for the very next answer. Every exchange is queued for the memory updater; when a conversation is dropped (10 idle minutes, or tray › New conversation) memory gets its pass straight away.
+- **Problems** (no API key, Claude Code missing, rate limits, network): the buddy shows the reason as its caption and a tray notification says it, at most once per 10 minutes. Whatever was said before a failure stays said.
+- **Hidden floating cursor**: with the buddy docked, what it heard, "Listening…", "Thinking…", each spoken sentence and any problem show as a subtitle at the bottom of the monitor you're on. It never takes focus or clicks and stays out of screenshots.
+- **Startup**: the capture device (D3D11) and Whisper's GPU runtime (Vulkan) start one after the other, after the UI is up, and never at the same time (`GpuInitGate`). On Optimus laptops starting both together crashed Clicky in D3D11CreateDevice about one start in six. A capture warm-up that fails for any other reason is logged and the first Talk creates what it needs.
 
 ## Point, highlight and draw (M7)
 
