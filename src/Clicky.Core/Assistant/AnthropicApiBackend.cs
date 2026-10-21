@@ -143,7 +143,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             // A cancelled reply (barge-in) still happened as far as the user is concerned: keep what was said.
             if (reply.Completed || reply.HasText)
             {
-                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now), limits);
+                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now, request.Attachments), limits);
             }
         }
     }
@@ -197,12 +197,12 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         IReadOnlyList<ToolCallRecord> pending = [];
         foreach (var turn in conversation.Turns)
         {
-            messages.Add(UserMessage(pending, turn.Screenshot, turn.UserText));
+            messages.Add(UserMessage(pending, turn.Screenshot, turn.UserText, turn.Attachments));
             messages.Add(AssistantMessage(turn));
             pending = turn.ToolCalls;
         }
 
-        messages.Add(UserMessage(pending, request.Screenshot?.Png, userText));
+        messages.Add(UserMessage(pending, request.Screenshot?.Png, userText, request.Attachments));
 
         return new MessageCreateParams
         {
@@ -237,12 +237,25 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         return blocks;
     }
 
-    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, byte[]? png, string text)
+    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, byte[]? png, string text, IReadOnlyList<RequestAttachment>? attachments)
     {
         var content = new List<BetaContentBlockParam>();
         foreach (var call in pending)
         {
             content.Add(new BetaToolResultBlockParam { ToolUseID = call.Id, Content = ToolResultText });
+        }
+
+        // Documents and pictures before the screenshot and the question, like a person handing them over first.
+        foreach (var attachment in attachments ?? [])
+        {
+            content.Add(new BetaTextBlockParam { Text = PromptLibrary.AttachmentText(attachment) });
+            if (attachment is { Kind: AttachmentKind.Image, Image: { } image })
+            {
+                content.Add(new BetaImageBlockParam
+                {
+                    Source = new BetaBase64ImageSource { Data = Convert.ToBase64String(image), MediaType = ToMediaType(attachment.MediaType) },
+                });
+            }
         }
 
         if (png is not null)
@@ -318,6 +331,14 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
 
         return tools;
     }
+
+    private static MediaType ToMediaType(string? mediaType) => mediaType switch
+    {
+        "image/jpeg" => MediaType.ImageJpeg,
+        "image/gif" => MediaType.ImageGif,
+        "image/webp" => MediaType.ImageWebP,
+        _ => MediaType.ImagePng,
+    };
 
     private static Effort ToEffort(ClaudeEffort effort) => effort switch
     {
@@ -491,14 +512,15 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 stop == ReplyStop.Refused ? _refusal : null);
         }
 
-        public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at) => new(
+        public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at, IReadOnlyList<RequestAttachment>? attachments) => new(
             userText,
             png,
             _spoken.ToString(),
             Completed ? [.. _toolCalls] : [],
             at,
             Interrupted: !Completed,
-            Thinking: Completed ? [.. _thinking] : []);
+            Thinking: Completed ? [.. _thinking] : [],
+            Attachments: attachments is { Count: > 0 } ? attachments : null);
 
         private IEnumerable<ReplyEvent> FinishTool(Block block, string name, ILogger logger)
         {

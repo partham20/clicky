@@ -42,6 +42,8 @@ public sealed record ClickySettings
 
     public DictationSettings Dictation { get; init; } = new();
 
+    public TextModeSettings Text { get; init; } = new();
+
     public InkSettings Ink { get; init; } = new();
 
     public SuggestionSettings Suggestions { get; init; } = new();
@@ -66,6 +68,7 @@ public sealed record ClickySettings
         Updates = (Updates ?? new()).Normalize(),
         Connectors = (Connectors ?? new()).Normalize(),
         Dictation = (Dictation ?? new()).Normalize(),
+        Text = (Text ?? new()).Normalize(),
         Ink = Ink ?? new(),
         Suggestions = (Suggestions ?? new()).Normalize(),
         Debug = Debug ?? new(),

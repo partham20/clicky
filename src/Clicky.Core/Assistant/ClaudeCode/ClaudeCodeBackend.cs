@@ -203,7 +203,16 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
             if (reply.Completed || reply.HasText)
             {
-                conversation.Append(new ConversationTurn(userText, request.Screenshot?.Png, reply.SpokenText, [], conversation.Now, Interrupted: !reply.Completed), limits);
+                conversation.Append(
+                    new ConversationTurn(
+                        userText,
+                        request.Screenshot?.Png,
+                        reply.SpokenText,
+                        [],
+                        conversation.Now,
+                        Interrupted: !reply.Completed,
+                        Attachments: request.Attachments is { Count: > 0 } attachments ? attachments : null),
+                    limits);
                 if (session is not null)
                 {
                     session.TurnsSeen = conversation.Turns.Count;
@@ -320,13 +329,19 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
 
     /// <summary>
     /// Earlier turns as text, for a fresh process joining a conversation that already has history
-    /// (Claude Code restarted, or history was trimmed). Old screenshots are not resent.
+    /// (Claude Code restarted, or history was trimmed). Old screenshots and pictures are not resent;
+    /// documents history still holds are.
     /// </summary>
     internal static string Transcript(IReadOnlyList<ConversationTurn> turns)
     {
         var text = new StringBuilder("(Earlier in this conversation, for context. Screenshots from these turns are not shown again.)\n");
         foreach (var turn in turns)
         {
+            foreach (var attachment in turn.Attachments ?? [])
+            {
+                text.Append('\n').Append(PromptLibrary.AttachmentText(attachment.Kind == AttachmentKind.Image ? attachment.WithoutContent() : attachment)).Append('\n');
+            }
+
             text.Append("\nUser: ").Append(turn.UserText).Append("\nClicky: ").Append(turn.AssistantText.Trim());
             if (turn.Interrupted)
             {
@@ -353,6 +368,19 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         if (session.TurnsSeen < turns.Count)
         {
             content.Add(new JsonObject { ["type"] = "text", ["text"] = Transcript(turns) });
+        }
+
+        foreach (var attachment in request.Attachments ?? [])
+        {
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = PromptLibrary.AttachmentText(attachment) });
+            if (attachment is { Kind: AttachmentKind.Image, Image: { } image })
+            {
+                content.Add(new JsonObject
+                {
+                    ["type"] = "image",
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = attachment.MediaType ?? "image/png", ["data"] = Convert.ToBase64String(image) },
+                });
+            }
         }
 
         if (request.Screenshot is { } shot)
