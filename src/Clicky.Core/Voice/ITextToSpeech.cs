@@ -8,6 +8,12 @@ public enum VoiceOutputEngine
 
     /// <summary>A hosted speech API (OpenAI). Natural voices; needs an API key and sends the reply text out.</summary>
     Cloud,
+
+    /// <summary>
+    /// A neural voice running on this PC (Kokoro-82M through sherpa-onnx, CPU only): natural, offline
+    /// and free, after a one-time model download. See <see cref="LocalTextToSpeech"/>.
+    /// </summary>
+    Local,
 }
 
 /// <param name="Id">Engine-specific id, for settings.speech.windowsVoice.</param>
@@ -16,7 +22,7 @@ public enum VoiceOutputEngine
 /// <param name="IsDefault">The voice Windows uses when none is chosen.</param>
 public sealed record VoiceInfo(string Id, string Name, string Language, bool IsDefault);
 
-/// <param name="Voice">Windows voice id or cloud voice name; empty for the engine's default.</param>
+/// <param name="Voice">Windows voice id, cloud voice name or local voice name; empty for the engine's default.</param>
 /// <param name="Rate">1 is normal speed.</param>
 public readonly record struct SpeechRequest(string Voice, double Rate);
 

@@ -12,8 +12,8 @@ namespace Clicky.Platform.Windows.Speech;
 /// </summary>
 /// <remarks>
 /// <para>The newer "natural" Narrator voices are not offered to apps through this API, so on most
-/// PCs the choice is the classic set (David, Zira, Mark, plus whatever language packs added). The
-/// cloud engine is the option for a natural voice.</para>
+/// PCs the choice is the classic set (David, Zira, Mark, plus whatever language packs added). For a
+/// natural voice there is the local engine (Kokoro, <see cref="LocalTextToSpeech"/>) or the cloud one.</para>
 /// <para>One synthesizer, one request at a time; the speech pipeline only asks for one sentence
 /// ahead anyway. Each sentence comes back as a WAV in memory, never on disk.</para>
 /// </remarks>

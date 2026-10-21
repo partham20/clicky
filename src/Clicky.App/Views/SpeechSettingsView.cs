@@ -27,15 +27,20 @@ internal sealed class SpeechSettingsView : ContentControl
 
     private readonly ISettingsStore _settings;
     private readonly ReplyPresenter _replies;
+    private readonly LocalTextToSpeech _localTts;
+    private readonly LocalVoiceDownloader _localModels;
     private readonly Dispatcher _dispatcher;
     private readonly ILogger<SpeechSettingsView> _logger;
     private readonly DispatcherTimer _sliderSave;
 
     private readonly CheckBox _quietMode = new() { Content = "Quiet mode: never speak, show replies as text (also in the tray menu)" };
     private readonly RadioButton _windows = new() { Content = "Windows voices: free, offline, quick", Margin = new Thickness(0, 2, 0, 2) };
+    private readonly RadioButton _local = new() { Content = "Natural voice on this PC (Kokoro): free, offline, reply text stays here; one-time download", Margin = new Thickness(0, 2, 0, 2) };
     private readonly RadioButton _cloud = new() { Content = "Cloud (OpenAI): natural voices; uses the OpenAI key above and sends reply text to OpenAI", Margin = new Thickness(0, 2, 0, 2) };
     private readonly ComboBox _windowsVoice = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ComboBox _cloudVoice = new() { MinWidth = 160, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly ComboBox _localVoice = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly TextBlock _localStatus = new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 2) };
     private readonly Slider _rate = new() { Minimum = SpeechSettings.MinRate, Maximum = SpeechSettings.MaxRate, TickFrequency = 0.1, IsSnapToTickEnabled = true, Width = 240 };
     private readonly Slider _volume = new() { Minimum = 0, Maximum = 100, TickFrequency = 5, IsSnapToTickEnabled = true, Width = 240 };
     private readonly TextBlock _rateLabel = new() { Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -47,10 +52,18 @@ internal sealed class SpeechSettingsView : ContentControl
     private readonly TextBlock _status = new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
     private bool _syncing;
 
-    public SpeechSettingsView(ISettingsStore settings, ReplyPresenter replies, Dispatcher dispatcher, ILogger<SpeechSettingsView> logger)
+    public SpeechSettingsView(
+        ISettingsStore settings,
+        ReplyPresenter replies,
+        LocalTextToSpeech localTts,
+        LocalVoiceDownloader localModels,
+        Dispatcher dispatcher,
+        ILogger<SpeechSettingsView> logger)
     {
         _settings = settings;
         _replies = replies;
+        _localTts = localTts;
+        _localModels = localModels;
         _dispatcher = dispatcher;
         _logger = logger;
         _sliderSave = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromMilliseconds(300) };
@@ -63,6 +76,14 @@ internal sealed class SpeechSettingsView : ContentControl
         _quietMode.Click += (_, _) => Save(s => s with { QuietMode = _quietMode.IsChecked == true });
         _windows.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Windows });
         _cloud.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Cloud });
+        _local.Checked += (_, _) => Save(s => s with { Engine = VoiceOutputEngine.Local });
+        _localVoice.SelectionChanged += (_, _) =>
+        {
+            if (_localVoice.SelectedItem is ComboBoxItem { Tag: string id })
+            {
+                Save(s => s with { LocalVoice = id });
+            }
+        };
         _windowsVoice.SelectionChanged += (_, _) =>
         {
             if (_windowsVoice.SelectedItem is ComboBoxItem { Tag: string id })
@@ -98,11 +119,13 @@ internal sealed class SpeechSettingsView : ContentControl
         Loaded += (_, _) =>
         {
             _settings.Changed += OnSettingsChanged;
+            _localTts.DownloadProgressChanged += OnLocalDownload;
             Sync();
         };
         Unloaded += (_, _) =>
         {
             _settings.Changed -= OnSettingsChanged;
+            _localTts.DownloadProgressChanged -= OnLocalDownload;
             _sliderSave.Stop();
         };
     }
@@ -138,6 +161,9 @@ internal sealed class SpeechSettingsView : ContentControl
         panel.Children.Add(_quietMode);
         panel.Children.Add(_windows);
         panel.Children.Add(_windowsVoice);
+        panel.Children.Add(_local);
+        panel.Children.Add(_localVoice);
+        panel.Children.Add(_localStatus);
         panel.Children.Add(_cloud);
         panel.Children.Add(_cloudVoice);
 
@@ -192,6 +218,8 @@ internal sealed class SpeechSettingsView : ContentControl
             _quietMode.IsChecked = speech.QuietMode;
             _windows.IsChecked = speech.Engine == VoiceOutputEngine.Windows;
             _cloud.IsChecked = speech.Engine == VoiceOutputEngine.Cloud;
+            _local.IsChecked = speech.Engine == VoiceOutputEngine.Local;
+            _localVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Local;
             _windowsVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Windows;
             _cloudVoice.IsEnabled = speech.Engine == VoiceOutputEngine.Cloud;
             _cloudVoice.SelectedItem = CloudVoices.Contains(speech.CloudVoice) ? speech.CloudVoice : null;
@@ -205,6 +233,7 @@ internal sealed class SpeechSettingsView : ContentControl
             _sharing.IsChecked = speech.QuietWhenSharing;
             _focus.IsChecked = speech.QuietInFocusAssist;
             SyncVoices(speech.WindowsVoice);
+            SyncLocalVoices(speech);
             SyncDevices(speech.OutputDevice);
         }
         finally
@@ -237,6 +266,43 @@ internal sealed class SpeechSettingsView : ContentControl
 
         _windowsVoice.SelectedItem = _windowsVoice.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == selectedId) ?? _windowsVoice.Items[0];
     }
+
+    private void SyncLocalVoices(SpeechSettings speech)
+    {
+        var model = LocalVoiceModels.Find(speech.LocalModel) ?? LocalVoiceModels.Kokoro;
+        _localVoice.Items.Clear();
+        foreach (var voice in model.Voices)
+        {
+            _localVoice.Items.Add(new ComboBoxItem { Content = voice.Label, Tag = voice.Id });
+        }
+
+        // A voice set by hand in settings.json (another language, a Piper speaker number) stays selected.
+        var selected = string.IsNullOrEmpty(speech.LocalVoice) ? LocalVoiceModels.DefaultVoice : speech.LocalVoice;
+        if (model.FindVoice(selected) is null)
+        {
+            _localVoice.Items.Add(new ComboBoxItem { Content = selected, Tag = selected });
+        }
+
+        _localVoice.SelectedItem = _localVoice.Items.Cast<ComboBoxItem>().First(i => string.Equals((string)i.Tag, selected, StringComparison.OrdinalIgnoreCase));
+        ShowLocalStatus(speech, _localTts.Download);
+    }
+
+    private void ShowLocalStatus(SpeechSettings speech, LocalVoiceDownloadProgress? download)
+    {
+        var model = LocalVoiceModels.Find(speech.LocalModel);
+        _localStatus.Text = (speech.LocalModelPath, download, model) switch
+        {
+            ({ Length: > 0 } path, _, _) => $"Using the model in {path}.",
+            (_, { Unpacking: true }, _) => "Unpacking the voice…",
+            (_, { } d, _) => $"Downloading {d.Model.Title}: {d.Fraction:P0} of {d.Model.SizeText}…",
+            (_, _, null) => $"Unknown model \"{speech.LocalModel}\" in settings.json.",
+            (_, _, { } m) when _localModels.IsAvailable(m) => $"{m.Title} is on this PC ({m.ExtractedSize / 1_000_000:0} MB). Uses about 700 MB of memory while Clicky runs.",
+            (_, _, { } m) => $"Downloads {m.Title} ({m.SizeText}) when you pick it; replies show as text until it's ready.",
+        };
+    }
+
+    private void OnLocalDownload(object? sender, LocalVoiceDownloadProgress? progress) =>
+        _dispatcher.InvokeAsync(() => ShowLocalStatus(_settings.Current.Speech, progress));
 
     private void SyncDevices(string selectedId)
     {

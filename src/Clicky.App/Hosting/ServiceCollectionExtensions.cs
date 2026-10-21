@@ -112,9 +112,17 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ISpeaker, WasapiSpeaker>();
         services.AddSingleton<WindowsTextToSpeech>();
         services.AddSingleton<OpenAiTextToSpeech>();
-        services.AddSingleton<Func<VoiceOutputEngine, ITextToSpeech>>(sp => engine => engine == VoiceOutputEngine.Cloud
-            ? sp.GetRequiredService<OpenAiTextToSpeech>()
-            : sp.GetRequiredService<WindowsTextToSpeech>());
+        services.AddSingleton(sp => new LocalVoiceDownloader(
+            sp.GetRequiredService<HttpClient>(),
+            paths.VoiceModelsDirectory,
+            sp.GetRequiredService<ILogger<LocalVoiceDownloader>>()));
+        services.AddSingleton<LocalTextToSpeech>();
+        services.AddSingleton<Func<VoiceOutputEngine, ITextToSpeech>>(sp => engine => engine switch
+        {
+            VoiceOutputEngine.Cloud => sp.GetRequiredService<OpenAiTextToSpeech>(),
+            VoiceOutputEngine.Local => sp.GetRequiredService<LocalTextToSpeech>(),
+            _ => sp.GetRequiredService<WindowsTextToSpeech>(),
+        });
         services.AddSingleton<IQuietDetector, WindowsQuietDetector>();
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();

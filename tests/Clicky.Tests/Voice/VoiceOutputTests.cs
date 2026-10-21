@@ -210,6 +210,19 @@ public sealed class VoiceOutputTests
     }
 
     [Fact]
+    public async Task The_local_engine_is_asked_for_the_local_voice()
+    {
+        await _settings.UpdateAsync(s => s with { Speech = s.Speech with { Engine = VoiceOutputEngine.Local, WindowsVoice = "heera", LocalVoice = "bf_emma" } });
+        var asked = new List<VoiceOutputEngine>();
+        using var output = new VoiceOutput(_speaker, e => { asked.Add(e); return _tts; }, _quiet, _settings, NullLogger<VoiceOutput>.Instance);
+
+        await output.Speak("Hi.").Completion.WaitAsync(Timeout);
+
+        Assert.Equal([VoiceOutputEngine.Local], asked);
+        Assert.Equal(new SpeechRequest("bf_emma", 1.0), _tts.LastRequest);
+    }
+
+    [Fact]
     public async Task A_reply_with_nothing_speakable_still_completes()
     {
         using var output = Output();

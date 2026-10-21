@@ -26,6 +26,8 @@ internal sealed class VoiceStartup(
     VoiceOutput speech,
     WhisperSpeechToText whisper,
     ModelDownloader downloader,
+    LocalTextToSpeech localVoice,
+    LocalVoiceDownloader voiceDownloader,
     ISettingsStore settings,
     IUserNotifier notifier,
     ILogger<VoiceStartup> logger) : IHostedService, IDisposable
@@ -36,10 +38,12 @@ internal sealed class VoiceStartup(
     private readonly CancellationTokenSource _stopping = new();
     private int _warming;
     private WhisperModel? _downloading;
+    private LocalVoiceModel? _downloadingVoice;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
         whisper.DownloadProgressChanged += OnDownloadProgress;
+        localVoice.DownloadProgressChanged += OnVoiceDownloadProgress;
         settings.Changed += OnSettingsChanged;
         _ = Task.Run(WarmUpGpuUsersAsync, CancellationToken.None);
 
@@ -53,6 +57,7 @@ internal sealed class VoiceStartup(
     {
         settings.Changed -= OnSettingsChanged;
         whisper.DownloadProgressChanged -= OnDownloadProgress;
+        localVoice.DownloadProgressChanged -= OnVoiceDownloadProgress;
         await _stopping.CancelAsync();
     }
 
@@ -60,6 +65,10 @@ internal sealed class VoiceStartup(
 
     private static bool AffectsEngine(VoiceSettings a, VoiceSettings b) =>
         a.Engine != b.Engine || a.LocalModel != b.LocalModel || a.CpuModel != b.CpuModel || a.Language != b.Language;
+
+    private static bool AffectsLocalVoice(SpeechSettings a, SpeechSettings b) =>
+        a.LocalModel != b.LocalModel || a.LocalModelPath != b.LocalModelPath || a.LocalThreads != b.LocalThreads
+        || LocalVoiceModels.LanguageOf(a.LocalVoice) != LocalVoiceModels.LanguageOf(b.LocalVoice);
 
     private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
     {
@@ -69,7 +78,9 @@ internal sealed class VoiceStartup(
         }
 
         var (before, after) = (e.Previous.Speech, e.Current.Speech);
-        if (before.Engine != after.Engine || before.WindowsVoice != after.WindowsVoice)
+        if (before.Engine != after.Engine
+            || before.WindowsVoice != after.WindowsVoice
+            || (after.Engine == VoiceOutputEngine.Local && AffectsLocalVoice(before, after)))
         {
             _ = Task.Run(() => speech.WarmUpAsync(_stopping.Token), CancellationToken.None);
         }
@@ -138,6 +149,26 @@ internal sealed class VoiceStartup(
             if (downloader.IsAvailable(model))
             {
                 notifier.Notify("Speech model ready", "Talk is ready: hold Ctrl+Alt and speak.");
+            }
+        }
+    }
+
+    private void OnVoiceDownloadProgress(object? sender, LocalVoiceDownloadProgress? progress)
+    {
+        if (progress is { Received: 0, Unpacking: false } started)
+        {
+            _downloadingVoice = started.Model;
+            notifier.Notify(
+                "Downloading the natural voice",
+                $"Clicky is downloading {started.Model.Title} ({started.Model.SizeText}) once, so replies can be spoken by a natural voice on this PC. Until then they show as text.");
+        }
+        else if (progress is null && _downloadingVoice is { } model)
+        {
+            // A failed download is logged, and explained on the next reply.
+            _downloadingVoice = null;
+            if (voiceDownloader.IsAvailable(model))
+            {
+                notifier.Notify("Natural voice ready", "Replies are spoken by the new voice from now on.");
             }
         }
     }

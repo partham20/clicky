@@ -422,7 +422,7 @@ public sealed class SpokenReply : ITalkReply, IDisposable
         var logger = _owner.Logger;
         var token = _cancel.Token;
         var engine = _owner.Engines(_settings.Engine);
-        var request = new SpeechRequest(_settings.Engine == VoiceOutputEngine.Cloud ? _settings.CloudVoice : _settings.WindowsVoice, _settings.Rate);
+        var request = new SpeechRequest(_settings.VoiceFor(_settings.Engine), _settings.Rate);
 
         // Open the device (unless Prepare already did) while the first sentence is still being written and synthesized.
         var opening = Task.Run(() => _owner.OpenSpeakerAsync(_settings, token), CancellationToken.None);

@@ -53,6 +53,9 @@ public sealed class ClickyPaths
     /// <summary>Whisper models, %LocalAppData%\Clicky\models by default.</summary>
     public string ModelsDirectory => Path.Combine(LocalRoot, "models");
 
+    /// <summary>Local voice models (Kokoro), one folder each, %LocalAppData%\Clicky\models\voices by default.</summary>
+    public string VoiceModelsDirectory => Path.Combine(ModelsDirectory, "voices");
+
     /// <summary>
     /// Working folder for Claude Code (subscription backend): an empty folder, so it finds no
     /// project files, plus the system prompt it is given.
