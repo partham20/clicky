@@ -37,6 +37,12 @@ public static partial class ModelRouter
             return new(ModelTier.Deep, "agent");
         }
 
+        // The next step has to land on the right control in a screen that just changed.
+        if (request.Source == RequestSource.Walkthrough)
+        {
+            return new(ModelTier.Deep, "walkthrough");
+        }
+
         var text = request.Text ?? string.Empty;
         var words = WordPattern().Count(text);
         if (words >= LongQuestionWords)
