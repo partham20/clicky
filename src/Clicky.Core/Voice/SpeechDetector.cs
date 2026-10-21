@@ -32,6 +32,9 @@ public static class SpeechDetector
     /// <summary>How far above the noise floor a frame must be.</summary>
     public const double MarginDb = 12;
 
+    /// <summary>Frames quieter than this are digital silence, not room noise, and do not count towards the noise floor.</summary>
+    public const double DigitalSilenceDb = -100;
+
     /// <summary>Frames quieter than this are never speech.</summary>
     public const double AbsoluteFloorDb = -50;
 
@@ -64,10 +67,11 @@ public static class SpeechDetector
             energies[frame] = 10 * Math.Log10(Math.Max(sum / FrameSamples, 1e-12));
         }
 
-        var sorted = (double[])energies.Clone();
+        // Devices hand over exact zeros while they spin up; that is not the room's noise.
+        var sorted = energies.Where(e => e > DigitalSilenceDb).ToArray();
         Array.Sort(sorted);
-        var noiseFloor = sorted[(int)(sorted.Length * 0.1)];
-        var peak = sorted[^1];
+        var noiseFloor = sorted.Length == 0 ? energies.Min() : sorted[(int)(sorted.Length * 0.1)];
+        var peak = energies.Max();
         var threshold = Math.Clamp(noiseFloor + MarginDb, AbsoluteFloorDb, CertainSpeechDb);
 
         var speechFrames = 0;

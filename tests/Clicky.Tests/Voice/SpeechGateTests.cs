@@ -48,6 +48,16 @@ public sealed class SpeechGateTests
     }
 
     [Fact]
+    public void Zeros_from_a_device_starting_up_do_not_drag_the_noise_floor_down()
+    {
+        // 300 ms of exact zeros, then a noisy room at -46 dBFS: none of it is speech.
+        var analysis = SpeechDetector.Analyze(Concat(new float[4_800], Noise(2, -46)));
+
+        Assert.InRange(analysis.NoiseFloorDb, -48, -44);
+        Assert.False(analysis.HasSpeech(MinSpeech), analysis.ToString());
+    }
+
+    [Fact]
     public void A_click_is_too_short_to_count()
     {
         var analysis = SpeechDetector.Analyze(Concat(Noise(1, -60), Tone(0.06, -10), Noise(1, -60)));
