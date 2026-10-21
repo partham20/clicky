@@ -385,7 +385,7 @@ internal sealed class DictationCoordinator(
         {
             var mode = settings.Current.Capture.Mode;
             var shot = await capture.CaptureAsync(new CaptureTarget(mode, CursorReader.TryGet(out var cursor, out _) ? cursor : null), _stopping.Token).ConfigureAwait(false);
-            screenshot = new RequestScreenshot(shot.Png, shot.Geometry);
+            screenshot = new RequestScreenshot(shot.Image, shot.Geometry);
         }
         catch (CaptureException ex)
         {

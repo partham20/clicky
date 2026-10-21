@@ -118,7 +118,7 @@ public sealed class ClaudeAssistant(
         logger.LogInformation("Asking Claude ({Backend}, {Model}, {Tier}: {Reason})", backend.Kind, model, route.Tier, route.Reason);
         yield return new ReplyStarted(backend.Kind, model, route.Tier, route.Reason);
 
-        await foreach (var replyEvent in backend.ReplyAsync(conversation, request, model, claude.EffortFor(route.Tier), cancellationToken).ConfigureAwait(false))
+        await foreach (var replyEvent in backend.ReplyAsync(conversation, request, model, claude.EffortFor(route.Tier), claude.ThinkingFor(route.Tier), cancellationToken).ConfigureAwait(false))
         {
             yield return replyEvent;
         }

@@ -19,16 +19,17 @@ public sealed class ClaudeCodeBackendTests : IDisposable
     private readonly List<FakeCliProcess> _processes = [];
     private readonly List<ClaudeCliStartInfo> _starts = [];
     private readonly Queue<string[]> _replies = new();
+    private readonly FakeSettingsStore _settings;
     private readonly ClaudeCodeBackend _backend;
 
     public ClaudeCodeBackendTests()
     {
         // Any existing file stands in for claude.exe; the fake never runs it.
-        var settings = new FakeSettingsStore(ClickySettings.Default with
+        _settings = new FakeSettingsStore(ClickySettings.Default with
         {
             Claude = new ClaudeSettings(Backend: ClaudeBackendKind.Subscription, CliPath: typeof(ClaudeCodeBackendTests).Assembly.Location),
         });
-        _backend = new ClaudeCodeBackend(settings, _directory, NullLogger<ClaudeCodeBackend>.Instance, info =>
+        _backend = new ClaudeCodeBackend(_settings, _directory, NullLogger<ClaudeCodeBackend>.Instance, info =>
         {
             _starts.Add(info);
             var process = new FakeCliProcess(_replies);
@@ -64,7 +65,7 @@ public sealed class ClaudeCodeBackendTests : IDisposable
 
         var turn = Assert.Single(conversation.Turns);
         Assert.Equal("That's Share.  Click it.", turn.AssistantText);
-        Assert.Equal(s_shot.Png, turn.Screenshot);
+        Assert.Equal(s_shot.Image, turn.Screenshot);
 
         // Isolated, subscription-billed, nothing saved; screenshot inline over stdin.
         var start = Assert.Single(_starts);
@@ -77,7 +78,7 @@ public sealed class ClaudeCodeBackendTests : IDisposable
         var user = _processes[0].Written.Single(m => m["type"]!.GetValue<string>() == "user");
         var content = user["message"]!["content"]!.AsArray();
         Assert.Equal(["image", "text"], content.Select(c => c!["type"]!.GetValue<string>()));
-        Assert.Equal(Convert.ToBase64String(s_shot.Png), content[0]!["source"]!["data"]!.GetValue<string>());
+        Assert.Equal(Convert.ToBase64String(s_shot.Image), content[0]!["source"]!["data"]!.GetValue<string>());
     }
 
     [Fact]
@@ -145,7 +146,7 @@ public sealed class ClaudeCodeBackendTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await foreach (var e in _backend.ReplyAsync(conversation, new ClaudeRequest("tell me a story", RequestSource.Voice), "haiku", ClaudeEffort.Low, cancel.Token))
+            await foreach (var e in _backend.ReplyAsync(conversation, new ClaudeRequest("tell me a story", RequestSource.Voice), "haiku", ClaudeEffort.Low, thinking: false, cancel.Token))
             {
                 if (e is ReplyText)
                 {
@@ -173,13 +174,133 @@ public sealed class ClaudeCodeBackendTests : IDisposable
 
         var error = await Assert.ThrowsAsync<ClaudeBackendException>(async () =>
         {
-            await foreach (var _ in backend.ReplyAsync(new Conversation(), new ClaudeRequest("hi", RequestSource.Voice), "haiku", ClaudeEffort.Low))
+            await foreach (var _ in backend.ReplyAsync(new Conversation(), new ClaudeRequest("hi", RequestSource.Voice), "haiku", ClaudeEffort.Low, thinking: false))
             {
             }
         });
 
         Assert.Equal(ClaudeFailure.NotConfigured, error.Failure);
         Assert.False((await backend.CheckAsync()).Ready);
+    }
+
+    [Fact]
+    public async Task Effort_and_thinking_follow_the_route_with_control_messages()
+    {
+        var conversation = new Conversation();
+        Script(TextReply("msg_1", "Quick."));
+        await Collect(conversation, new ClaudeRequest("where is share", RequestSource.Voice), "haiku", ClaudeEffort.Low, thinking: false);
+        Script(TextReply("msg_2", "Deep."));
+
+        await Collect(conversation, new ClaudeRequest("explain this", RequestSource.Voice), "opus", ClaudeEffort.Medium, thinking: true);
+
+        var start = Assert.Single(_starts);
+        Assert.Equal("low", start.Arguments[start.Arguments.ToList().IndexOf("--effort") + 1]);
+        var controls = Controls(_processes[0]);
+
+        // The fast route is set up while the process starts, before anyone asks.
+        Assert.Equal(["initialize", "set_max_thinking_tokens", "set_model", "apply_flag_settings", "set_max_thinking_tokens"], controls.Select(c => c["subtype"]!.GetValue<string>()));
+        Assert.Equal(0, controls[1]["max_thinking_tokens"]!.GetValue<int>());
+        Assert.Equal("medium", controls[3]["settings"]!["effortLevel"]!.GetValue<string>());
+        Assert.Null(controls[4]["max_thinking_tokens"]);
+    }
+
+    [Fact]
+    public async Task A_trimmed_history_never_restarts_claude_code_mid_answer_and_the_next_question_moves_to_a_warm_spare()
+    {
+        var conversation = new Conversation();
+        Script(TextReply("msg_1", "One."));
+        await Collect(conversation, new ClaudeRequest("hi", RequestSource.Voice, s_shot), "haiku");
+
+        // Clicky drops old screenshots from its own copy (a trim), which used to restart the process.
+        conversation.Append(new ConversationTurn("more", [7], "ok", [], DateTimeOffset.UnixEpoch), new HistoryLimits(MaxScreenshots: 1, ScreenshotsAfterDrop: 0));
+
+        // An agent step carries on in the same process, while a spare starts for later.
+        Script(TextReply("msg_2", "Step."));
+        await Collect(conversation, new ClaudeRequest("go on", RequestSource.Agent, s_shot, Step: new AgentStep(2, 10, [])), "opus");
+        Assert.Equal(2, _processes.Count);
+        Assert.Equal(2, _processes[0].Written.Count(m => m["type"]!.GetValue<string>() == "user"));
+        Assert.DoesNotContain(_processes[1].Written, m => m["type"]!.GetValue<string>() == "user");
+
+        // The next new question goes to the spare, with the earlier turns as text, and the old process closes.
+        await WaitFor(() => _backend.SpareReady);
+        Script(TextReply("msg_3", "Fresh."));
+        var events = await Collect(conversation, new ClaudeRequest("and now?", RequestSource.Voice, s_shot), "haiku");
+
+        Assert.Equal("Fresh.", Assert.IsType<ReplyCompleted>(events[^1]).SpokenText);
+        Assert.True(_processes[0].HasExited);
+        var content = _processes[1].Written.Single(m => m["type"]!.GetValue<string>() == "user")["message"]!["content"]!.AsArray();
+        Assert.Contains("(Earlier in this conversation", content[0]!["text"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(2, _starts.Count);
+    }
+
+    [Fact]
+    public async Task Prepare_starts_claude_code_ahead_and_the_first_question_uses_it()
+    {
+        var conversation = new Conversation();
+
+        _backend.Prepare(conversation);
+        await WaitFor(() => _starts.Count == 1);
+        Script(TextReply("msg_1", "Ready."));
+        await Collect(conversation, new ClaudeRequest("hi", RequestSource.Voice), "haiku");
+
+        Assert.Single(_starts);
+        Assert.Single(_processes[0].Written, m => m["type"]!.GetValue<string>() == "user");
+    }
+
+    [Fact]
+    public async Task Keep_warm_starts_a_spare_that_the_first_question_takes_and_lets_it_go_when_turned_off()
+    {
+        _backend.WarmUp();
+        _backend.WarmUp();
+        Assert.Single(_starts);
+        await WaitFor(() => _backend.SpareReady);
+        Assert.Equal(2, Controls(_processes[0]).Count); // initialize, thinking off
+
+        Script(TextReply("msg_1", "One."));
+        await Collect(new Conversation(), new ClaudeRequest("hi", RequestSource.Voice), "haiku");
+        Assert.Single(_starts);
+
+        // A live process is enough; a second one only starts once it is gone.
+        _backend.WarmUp();
+        Assert.Single(_starts);
+
+        // Off (or the API backend): an idle spare is closed.
+        var other = new Conversation();
+        _backend.Prepare(other);
+        await WaitFor(() => _starts.Count == 2);
+        await _settings.UpdateAsync(s => s with { Claude = s.Claude with { KeepWarm = false } });
+        _backend.WarmUp();
+        Assert.True(_processes[1].HasExited);
+        Assert.False(_processes[0].HasExited);
+    }
+
+    [Fact]
+    public async Task Changed_memory_rides_on_the_next_message_instead_of_a_restart()
+    {
+        var conversation = new Conversation(memory: "Likes short answers.");
+        Script(TextReply("msg_1", "One."));
+        await Collect(conversation, new ClaudeRequest("hi", RequestSource.Voice), "haiku");
+        conversation.UpdateMemory("Likes very short answers.");
+        Script(TextReply("msg_2", "Two."));
+
+        await Collect(conversation, new ClaudeRequest("again", RequestSource.Voice), "haiku");
+
+        var users = _processes[0].Written.Where(m => m["type"]!.GetValue<string>() == "user").ToList();
+        Assert.Equal("Likes short answers.", users[0]["message"]!["content"]![0]!["text"]!.GetValue<string>());
+        Assert.Contains("Likes very short answers.", users[1]["message"]!["content"]![0]!["text"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.False(_processes[0].HasExited);
+    }
+
+    [Fact]
+    public async Task A_jpeg_screenshot_is_sent_as_jpeg()
+    {
+        var jpeg = s_shot with { Image = [0xFF, 0xD8, 0xFF, 0xE0, 1, 2] };
+        Script(TextReply("msg_1", "Done."));
+
+        await Collect(new Conversation(), new ClaudeRequest("hi", RequestSource.Voice, jpeg), "haiku");
+
+        var content = _processes[0].Written.Single(m => m["type"]!.GetValue<string>() == "user")["message"]!["content"]!.AsArray();
+        Assert.Equal("image/jpeg", content[0]!["source"]!["media_type"]!.GetValue<string>());
     }
 
     private static string[] TextReply(string id, params string[] chunks) =>
@@ -195,15 +316,36 @@ public sealed class ClaudeCodeBackendTests : IDisposable
     /// <summary>What Claude Code answers to the next user message, whichever process gets it.</summary>
     private void Script(string[] lines) => _replies.Enqueue(lines);
 
-    private async Task<List<ReplyEvent>> Collect(Conversation conversation, ClaudeRequest request, string model)
+    private Task<List<ReplyEvent>> Collect(Conversation conversation, ClaudeRequest request, string model) =>
+        Collect(conversation, request, model, ClaudeEffort.Low, thinking: false);
+
+    private async Task<List<ReplyEvent>> Collect(Conversation conversation, ClaudeRequest request, string model, ClaudeEffort effort, bool thinking)
     {
         var events = new List<ReplyEvent>();
-        await foreach (var e in _backend.ReplyAsync(conversation, request, model, ClaudeEffort.Low))
+        await foreach (var e in _backend.ReplyAsync(conversation, request, model, effort, thinking))
         {
             events.Add(e);
         }
 
         return events;
+    }
+
+    private static List<JsonNode> Controls(FakeCliProcess process)
+    {
+        lock (process.Written)
+        {
+            return [.. process.Written.Where(m => m["type"]!.GetValue<string>() == "control_request").Select(m => m["request"]!)];
+        }
+    }
+
+    private static async Task WaitFor(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting");
+            await Task.Delay(10);
+        }
     }
 
     /// <summary>Answers control requests like Claude Code and replays a script for each user message.</summary>

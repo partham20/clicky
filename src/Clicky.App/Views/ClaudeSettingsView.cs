@@ -241,7 +241,7 @@ internal sealed class ClaudeSettingsView : ContentControl
         try
         {
             var shot = await _capture.CaptureAsync(new CaptureTarget(CaptureMode.MonitorUnderCursor)).ConfigureAwait(false);
-            var request = new ClaudeRequest(TestQuestion, RequestSource.Typed, new RequestScreenshot(shot.Png, shot.Geometry), ModelTier.Fast);
+            var request = new ClaudeRequest(TestQuestion, RequestSource.Typed, new RequestScreenshot(shot.Image, shot.Geometry), ModelTier.Fast);
             var actions = new List<string>();
             ReplyCompleted? completed = null;
             string model = string.Empty;

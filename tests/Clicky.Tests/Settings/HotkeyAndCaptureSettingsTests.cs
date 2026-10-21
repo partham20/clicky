@@ -128,6 +128,7 @@ public sealed class HotkeyAndCaptureSettingsTests
               "overlay": { "hideFloatingCursor": true },
               "hotkeys": { "bindings": [ { "action": "OpenHome", "gesture": "Ctrl+Alt+H" } ] },
               "capture": { "includeCursor": true },
+              "claude": { "backend": "Subscription" },
             }
             """;
 
@@ -140,6 +141,10 @@ public sealed class HotkeyAndCaptureSettingsTests
         Assert.Equal(CaptureSettings.DefaultMaxLongEdge, loaded.Capture.MaxLongEdge);
         Assert.Equal(CaptureSettings.DefaultMaxPixels, loaded.Capture.MaxPixels);
         Assert.True(loaded.Capture.IncludeCursor);
+        Assert.Equal(ScreenshotFormat.Jpeg, loaded.Capture.Format);
+        Assert.Equal(CaptureSettings.DefaultJpegQuality, loaded.Capture.JpegQuality);
+        Assert.True(loaded.Claude.KeepWarm);
+        Assert.False(loaded.Claude.FastThinking);
     }
 
     [Fact]

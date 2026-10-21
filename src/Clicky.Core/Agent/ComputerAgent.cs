@@ -673,7 +673,7 @@ public sealed class ComputerAgent(
         try
         {
             var result = await capture.CaptureAsync(new CaptureTarget(settings.Current.Capture.Mode, at), cancellationToken).ConfigureAwait(false);
-            return new RequestScreenshot(result.Png, result.Geometry);
+            return new RequestScreenshot(result.Image, result.Geometry);
         }
         catch (CaptureException ex)
         {

@@ -621,7 +621,7 @@ public sealed class ClickyService : IAsyncDisposable
         {
             var shot = await _capture.CaptureAsync(new CaptureTarget(CaptureMode.MonitorUnderCursor), token).ConfigureAwait(false);
             await StepAsync(store, active, ClickyStepKind.Screenshot, Format($"Screenshot {shot.Geometry.ImageWidth}×{shot.Geometry.ImageHeight}")).ConfigureAwait(false);
-            return new RequestScreenshot(shot.Png, shot.Geometry);
+            return new RequestScreenshot(shot.Image, shot.Geometry);
         }
         catch (CaptureException ex)
         {

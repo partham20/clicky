@@ -52,7 +52,7 @@ public sealed class InkTrailDemo(
 
             var result = await shot.ConfigureAwait(false);
             ScreenshotPoint? pointer = cursor is { } c ? CoordinateMapper.ToScreenshot(c, result.Geometry) : null;
-            var attached = await ink.AttachAsync(new RequestScreenshot(result.Png, result.Geometry, pointer), trail).ConfigureAwait(false);
+            var attached = await ink.AttachAsync(new RequestScreenshot(result.Image, result.Geometry, pointer), trail).ConfigureAwait(false);
             var said = attached.Ink?.Describe() ?? "(the pointer barely moved over the screenshot, so nothing would be sent)";
             logger.LogInformation("Ink test on {Geometry}: {Description}", result.Geometry, said);
             presence.SetCaption(said);

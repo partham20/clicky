@@ -82,16 +82,16 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
             }
 
             var (width, height) = CoordinateMapper.DownscaleSize(frame.Width, frame.Height, settings.Capture.MaxLongEdge, settings.Capture.MaxPixels);
-            var png = await EncodePngAsync(frame.Pixels, frame.Width, frame.Height, width, height).ConfigureAwait(false);
+            var image = await ScreenshotCodec.EncodeAsync(frame.Pixels, frame.Width, frame.Height, settings.Capture.Format, settings.Capture.JpegQuality, width, height, cancellationToken).ConfigureAwait(false);
             var geometry = new ScreenshotGeometry(frame.Source, width, height);
             stopwatch.Stop();
 
             if (settings.Debug.SaveCaptures)
             {
-                await SaveDebugCopyAsync(png, geometry, cursor).ConfigureAwait(false);
+                await SaveDebugCopyAsync(image, geometry, cursor).ConfigureAwait(false);
             }
 
-            return new CaptureResult(png, geometry, monitor, stopwatch.Elapsed);
+            return new CaptureResult(image, geometry, monitor, stopwatch.Elapsed);
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException or TimeoutException)
         {
@@ -128,7 +128,8 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
 
             // Loads the capture item factory and the PNG codec with its scaler.
             _ = ActivationFactoryWarmUp();
-            await EncodePngAsync(new byte[16 * 16 * 4], 16, 16, 8, 8).ConfigureAwait(false);
+            var capture = _settings.Current.Capture;
+            await ScreenshotCodec.EncodeAsync(new byte[16 * 16 * 4], 16, 16, capture.Format, capture.JpegQuality, 8, 8, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Capture path warmed up in {Ms:0} ms", stopwatch.Elapsed.TotalMilliseconds);
         }
         catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
@@ -310,35 +311,15 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
         return pixels;
     }
 
-    private static async Task<byte[]> EncodePngAsync(byte[] bgra, int width, int height, int outputWidth, int outputHeight)
-    {
-        using var stream = new InMemoryRandomAccessStream();
-        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)width, (uint)height, 96, 96, bgra);
-        if (outputWidth != width || outputHeight != height)
-        {
-            encoder.BitmapTransform.ScaledWidth = (uint)outputWidth;
-            encoder.BitmapTransform.ScaledHeight = (uint)outputHeight;
-            encoder.BitmapTransform.InterpolationMode = BitmapInterpolationMode.Fant;
-        }
-
-        await encoder.FlushAsync();
-
-        var png = new byte[stream.Size];
-        stream.Seek(0);
-        await stream.ReadAsync(png.AsBuffer(), (uint)png.Length, InputStreamOptions.None);
-        return png;
-    }
-
-    /// <summary>Writes the PNG with a red crosshair at the pointer's mapped screenshot position.</summary>
-    private async Task SaveDebugCopyAsync(byte[] png, ScreenshotGeometry geometry, PixelPoint cursor)
+    /// <summary>Writes a PNG of the screenshot with a red crosshair at the pointer's mapped screenshot position.</summary>
+    private async Task SaveDebugCopyAsync(byte[] image, ScreenshotGeometry geometry, PixelPoint cursor)
     {
         try
         {
             byte[] pixels;
             using (var input = new InMemoryRandomAccessStream())
             {
-                await input.WriteAsync(png.AsBuffer());
+                await input.WriteAsync(image.AsBuffer());
                 input.Seek(0);
                 var decoder = await BitmapDecoder.CreateAsync(input);
                 var data = await decoder.GetPixelDataAsync(
@@ -352,7 +333,7 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
 
             var point = CoordinateMapper.ToScreenshot(cursor, geometry);
             DrawCrosshair(pixels, geometry.ImageWidth, geometry.ImageHeight, (int)Math.Round(point.X), (int)Math.Round(point.Y));
-            var marked = await EncodePngAsync(pixels, geometry.ImageWidth, geometry.ImageHeight, geometry.ImageWidth, geometry.ImageHeight).ConfigureAwait(false);
+            var marked = await ScreenshotCodec.EncodeAsync(pixels, geometry.ImageWidth, geometry.ImageHeight, ScreenshotFormat.Png, 0).ConfigureAwait(false);
 
             Directory.CreateDirectory(_paths.DebugCapturesDirectory);
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);

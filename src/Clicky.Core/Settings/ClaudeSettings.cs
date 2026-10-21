@@ -15,7 +15,9 @@ public sealed record ClaudeSettings(
     ClaudeEffort DeepEffort = ClaudeEffort.Medium,
     int MaxTurns = ClaudeSettings.DefaultMaxTurns,
     int IdleResetMinutes = ClaudeSettings.DefaultIdleResetMinutes,
-    string CliPath = "")
+    string CliPath = "",
+    bool FastThinking = false,
+    bool KeepWarm = true)
 {
     // Current IDs from the Claude docs (2026-10). Aliases on the subscription follow the newest model.
     public const string DefaultApiFastModel = "claude-haiku-5-5";
@@ -43,7 +45,7 @@ public sealed record ClaudeSettings(
 
     public string SubscriptionDeepModel { get; init; } = SubscriptionDeepModel;
 
-    /// <summary>Thinking effort for the fast model on the API (Claude Code uses its own default).</summary>
+    /// <summary>Thinking effort for the fast model.</summary>
     public ClaudeEffort FastEffort { get; init; } = FastEffort;
 
     public ClaudeEffort DeepEffort { get; init; } = DeepEffort;
@@ -56,6 +58,19 @@ public sealed record ClaudeSettings(
 
     /// <summary>Full path to claude.exe; empty finds it on PATH or in the usual install folders.</summary>
     public string CliPath { get; init; } = CliPath;
+
+    /// <summary>
+    /// Claude Code only: let the fast model think before it answers. Off by default, because on a
+    /// short spoken question thinking delays the first word by one to five seconds. The API backend
+    /// always uses adaptive thinking (switching it off between the steps of a tool loop is refused).
+    /// </summary>
+    public bool FastThinking { get; init; } = FastThinking;
+
+    /// <summary>
+    /// Claude Code only: keep one Claude Code process started and signed in while Clicky runs, so
+    /// no question waits for it to start (2-6 s). Costs one idle process.
+    /// </summary>
+    public bool KeepWarm { get; init; } = KeepWarm;
 
     public ClaudeSettings Normalize() => this with
     {
@@ -81,6 +96,9 @@ public sealed record ClaudeSettings(
     };
 
     public ClaudeEffort EffortFor(ModelTier tier) => tier == ModelTier.Deep ? DeepEffort : FastEffort;
+
+    /// <summary>Whether the model may think before answering (honoured by Claude Code; see <see cref="FastThinking"/>).</summary>
+    public bool ThinkingFor(ModelTier tier) => tier == ModelTier.Deep || FastThinking;
 
     private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 }

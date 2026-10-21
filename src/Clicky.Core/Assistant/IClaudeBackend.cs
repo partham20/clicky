@@ -20,8 +20,9 @@ public interface IClaudeBackend
     /// conversation at a time.
     /// </summary>
     /// <param name="model">Model ID or alias, from the router.</param>
+    /// <param name="thinking">False asks for an answer without thinking first, where the backend can do that.</param>
     /// <exception cref="ClaudeBackendException">Not set up, or the request failed.</exception>
-    IAsyncEnumerable<ReplyEvent> ReplyAsync(Conversation conversation, ClaudeRequest request, string model, ClaudeEffort effort, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<ReplyEvent> ReplyAsync(Conversation conversation, ClaudeRequest request, string model, ClaudeEffort effort, bool thinking, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// One plain request, text in and text out: no tools, images or conversation (the memory

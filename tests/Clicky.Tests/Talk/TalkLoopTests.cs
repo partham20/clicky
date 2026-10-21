@@ -65,7 +65,7 @@ public sealed class TalkLoopTests : IDisposable
         Assert.Equal(RequestSource.Voice, request.Source);
         Assert.Equal(CoordinateMapper.ToScreenshot(new PixelPoint(-1280, 720), Geometry), request.Screenshot!.Cursor);
         Assert.Equal(639.75, request.Screenshot.Cursor!.Value.X);
-        Assert.Equal([1, 2, 3], request.Screenshot.Png);
+        Assert.Equal([1, 2, 3], request.Screenshot.Image);
 
         var turn = Assert.Single(_memory.Turns);
         Assert.Equal(("where's share?", "It's the blue button.", MemoryTurnMode.Voice), (turn.User, turn.Assistant, turn.Mode));
@@ -132,7 +132,7 @@ public sealed class TalkLoopTests : IDisposable
 
         await Loop.AnswerAsync(Question("this one") with { Ink = trail }, Begin);
         Assert.Same(trail, _ink.Attached.Single());
-        Assert.Equal([9, 9], _assistant.Requests[0].Screenshot!.Png);
+        Assert.Equal([9, 9], _assistant.Requests[0].Screenshot!.Image);
 
         // No movement, no work; a painting failure still asks with the plain screenshot.
         await Loop.AnswerAsync(Question("no ink") with { Ink = InkTrail.Empty }, Begin);
@@ -140,7 +140,7 @@ public sealed class TalkLoopTests : IDisposable
         var result = await Loop.AnswerAsync(Question("broken ink") with { Ink = trail }, Begin);
         Assert.Single(_ink.Attached);
         Assert.Equal(TalkOutcome.Answered, result.Outcome);
-        Assert.Equal([1, 2, 3], _assistant.Requests[2].Screenshot!.Png);
+        Assert.Equal([1, 2, 3], _assistant.Requests[2].Screenshot!.Image);
     }
 
     [Fact]
@@ -524,7 +524,7 @@ public sealed class TalkLoopTests : IDisposable
             }
 
             Attached.Add(trail);
-            return Task.FromResult(screenshot with { Png = [9, 9] });
+            return Task.FromResult(screenshot with { Image = [9, 9] });
         }
     }
 

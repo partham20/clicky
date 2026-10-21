@@ -88,7 +88,9 @@ public sealed record CaptureSettings(
     CaptureMode Mode = CaptureMode.MonitorUnderCursor,
     int MaxLongEdge = CaptureSettings.DefaultMaxLongEdge,
     int MaxPixels = CaptureSettings.DefaultMaxPixels,
-    bool IncludeCursor = false)
+    bool IncludeCursor = false,
+    ScreenshotFormat Format = ScreenshotFormat.Jpeg,
+    int JpegQuality = CaptureSettings.DefaultJpegQuality)
 {
     public const int DefaultMaxLongEdge = 1568;
     public const int DefaultMaxPixels = 1_150_000;
@@ -96,6 +98,9 @@ public sealed record CaptureSettings(
     public const int MaxMaxLongEdge = 8192;
     public const int MinMaxPixels = 65_536;
     public const int MaxMaxPixels = 33_554_432;
+    public const int DefaultJpegQuality = 85;
+    public const int MinJpegQuality = 50;
+    public const int MaxJpegQuality = 100;
 
     public CaptureMode Mode { get; init; } = Mode;
 
@@ -108,11 +113,23 @@ public sealed record CaptureSettings(
     /// <summary>Draw the mouse pointer into screenshots.</summary>
     public bool IncludeCursor { get; init; } = IncludeCursor;
 
+    /// <summary>
+    /// How screenshots are encoded for Claude. JPEG is 5-8 times smaller than PNG for the same
+    /// screen, and every screenshot in the conversation is uploaded again with each question, so
+    /// it is the default; Claude reads UI text in it as well as in PNG.
+    /// </summary>
+    public ScreenshotFormat Format { get; init; } = Format;
+
+    /// <summary>JPEG quality, 50-100.</summary>
+    public int JpegQuality { get; init; } = JpegQuality;
+
     public CaptureSettings Normalize() => this with
     {
         Mode = Enum.IsDefined(Mode) ? Mode : CaptureMode.MonitorUnderCursor,
         MaxLongEdge = Math.Clamp(MaxLongEdge, MinMaxLongEdge, MaxMaxLongEdge),
         MaxPixels = Math.Clamp(MaxPixels, MinMaxPixels, MaxMaxPixels),
+        Format = Enum.IsDefined(Format) ? Format : ScreenshotFormat.Jpeg,
+        JpegQuality = Math.Clamp(JpegQuality, MinJpegQuality, MaxJpegQuality),
     };
 }
 
