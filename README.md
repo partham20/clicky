@@ -23,6 +23,8 @@ dotnet run --project src/Clicky.App
 
 Package versions are pinned centrally in `Directory.Packages.props`. Warnings are errors.
 
+Installer: `.uild\pack.ps1 -Version 0.2.0` publishes a self-contained win-x64 build and packs it with Velopack (`vpk`, pinned in `dotnet-tools.json`) into `artifactseleases`. Releases are cut by `.github/workflows/release.yml` (see Install and updates below).
+
 ## Data
 
 Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` environment variable):
@@ -38,6 +40,8 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
+- `updates`: `autoCheck` (true), `autoDownload` (true), `feedUrl` (empty means GitHub releases of this repository; another GitHub repo URL, an https URL or a local folder with `releases.win.json` also work), `prerelease` (false). Also in Settings > Updates and support.
+- `bug-reports\clicky-bug-*.zip`: made by Report a bug; the newest 5 are kept.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
 ## Behaviour notes
@@ -124,3 +128,17 @@ How it flows (`Clicky.Core/Memory`, no Windows APIs):
 - Writes are atomic (`.tmp` then move). Missing files are created from the templates.
 
 Until a Claude backend registers `IMemoryModel`, memory is read into prompts but not updated automatically.
+
+## Install, updates and bug reports (M18)
+
+**Install.** `Clicky-win-Setup.exe` (Velopack) installs per user to `%LocalAppData%\ClickyApp` with no admin prompt and no .NET install (the build is self-contained, about 92 MB), adds Start menu and desktop shortcuts and an Apps & features entry, and starts Clicky. The pack id is `ClickyApp`, not `Clicky`, because Setup empties its install folder and `%LocalAppData%\Clicky` holds the speech models. The pack id must never change, or installed copies stop updating. The installer is not code-signed yet, so SmartScreen warns on first run.
+
+**Updates.** A minute after startup and then every 6 hours the installed app asks GitHub releases for a newer version and downloads it in the background (deltas when the previous release is on the feed). It never restarts on its own: the tray menu gets **Update to x.y.z and restart** (and a notification says so once), and Settings > Updates and support has the same button plus Check for updates. Clicking it hands over to Velopack's updater, Clicky exits normally, the updater swaps `current\` and starts the new version. An update left waiting installs at the next start anyway. A development build (run from `bin\`) shows its version and skips all of this. Velopack's own log is `%LocalAppData%elopackelopack_ClickyApp.log`.
+
+**Start with Windows** points the Run entry at the stable stub `%LocalAppData%\ClickyApp\Clicky.exe`, never at `current\`, so it survives updates. Uninstall removes the Run entry. Uninstall keeps settings, memory and speech models (`%AppData%\Clicky`, `%LocalAppData%\Clicky`); delete those folders to remove everything.
+
+**Releasing.** Push a tag (`git tag v0.2.0; git push origin v0.2.0`) or run the Release workflow by hand with a version. It tests, downloads the previous release for a delta, runs `build\pack.ps1`, and publishes a GitHub release with the Setup, full and delta packages and `releases.win.json`. Versions with a suffix (`0.3.0-beta.1`) or the pre-release box go out as pre-releases, which installed copies skip unless `updates.prerelease` is on. To try a release locally first: pack two versions into one folder, install the older Setup, set `updates.feedUrl` to that folder.
+
+**Report a bug** (tray menu, or Settings > Updates and support): describe what happened, and Clicky writes `bug-reports\clicky-bug-<time>.zip` with `report.md` (the description plus version, Windows build, CPU, memory, monitors and DPI, language, voice and speech engines, update state), the last 7 days of logs (newest first, 30 MB cap, an oversized file keeps its end), `settings.json` and Velopack's log. Keys and tokens and the Windows user name in paths are removed from everything (`SecretRedactor`). Memory, screenshots and recordings are never included. Clicky sends nothing itself: Open GitHub issue opens a new issue with the description and system info filled in and shows the zip in Explorer to drag in.
+
+**Separate instances.** A copy started with `CLICKY_DATA_DIR` set is its own single instance, so a test or dev build can run beside the installed one. Both still share the one `Clicky` Run entry.

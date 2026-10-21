@@ -32,6 +32,9 @@ public sealed class ClickyPaths
 
     public string MemoryDirectory => Path.Combine(Root, "memory");
 
+    /// <summary>Zips made by Report a bug; the newest few are kept.</summary>
+    public string BugReportsDirectory => Path.Combine(Root, "bug-reports");
+
     /// <summary>Only written when settings.debug.saveCaptures is on.</summary>
     public string DebugCapturesDirectory => Path.Combine(Root, "debug", "captures");
 

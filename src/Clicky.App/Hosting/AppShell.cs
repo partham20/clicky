@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using Clicky.App.Buddy;
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Updates;
 using Microsoft.Extensions.Hosting;
 
 namespace Clicky.App.Hosting;
@@ -15,6 +16,12 @@ public interface IAppShell
 
     void ShowSettings();
 
+    /// <summary>Report a bug: describe, bundle logs into a zip, open a GitHub issue.</summary>
+    void ShowBugReport();
+
+    /// <summary>The Update button: hands the downloaded version to the updater and quits so it can install.</summary>
+    void RestartToUpdate();
+
     void Quit();
 }
 
@@ -25,10 +32,14 @@ internal sealed class AppShell(
     Func<HotkeysSettingsView> hotkeysView,
     Func<VoiceSettingsView> voiceView,
     Func<SpeechSettingsView> speechView,
-    Func<MemorySettingsView> memoryView) : IAppShell
+    Func<MemorySettingsView> memoryView,
+    Func<UpdatesSettingsView> updatesView,
+    Func<BugReportWindow> bugReport,
+    UpdateService updates) : IAppShell
 {
     private PlaceholderWindow? _home;
     private PlaceholderWindow? _settings;
+    private BugReportWindow? _bugReport;
 
     public void ShowHome() =>
         _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14.", extra: dockedBuddy()));
@@ -39,16 +50,27 @@ internal sealed class AppShell(
             $"Settings pages arrive in M18. Until then, edit the file directly; changes apply live.\n\n{paths.SettingsFile}",
             "Show settings.json",
             () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose(),
-            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView(), speechView(), memoryView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
+            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView(), speechView(), memoryView(), updatesView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
         {
             Width = 640,
             Height = 820,
         });
 
+    public void ShowBugReport() => _bugReport = Activate(_bugReport, bugReport);
+
+    public void RestartToUpdate()
+    {
+        if (updates.RestartToUpdate())
+        {
+            Quit();
+        }
+    }
+
     public void Quit() => lifetime.StopApplication();
 
     // A closed window cannot be shown again, and IsLoaded goes false on close, so reuse only a live one.
-    private static PlaceholderWindow Activate(PlaceholderWindow? existing, Func<PlaceholderWindow> create)
+    private static T Activate<T>(T? existing, Func<T> create)
+        where T : Window
     {
         var window = existing is { IsLoaded: true } ? existing : create();
 

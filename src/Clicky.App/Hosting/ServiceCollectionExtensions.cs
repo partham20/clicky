@@ -6,10 +6,12 @@ using Clicky.App.Views;
 using Clicky.Core;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Diagnostics;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
+using Clicky.Core.Updates;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
@@ -100,6 +102,13 @@ internal static class ServiceCollectionExtensions
             sp.GetService<IMemoryModel>()));
         services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
 
+        services.AddSingleton<IUpdateBackend, VelopackUpdateBackend>();
+        services.AddSingleton(sp => new UpdateService(
+            sp.GetRequiredService<IUpdateBackend>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<ILogger<UpdateService>>()));
+        services.AddSingleton(sp => new BugReportWriter(paths, sp.GetRequiredService<ILogger<BugReportWriter>>()));
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
@@ -113,6 +122,10 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
+        services.AddTransient<UpdatesSettingsView>();
+        services.AddSingleton<Func<UpdatesSettingsView>>(sp => sp.GetRequiredService<UpdatesSettingsView>);
+        services.AddTransient<BugReportWindow>();
+        services.AddSingleton<Func<BugReportWindow>>(sp => sp.GetRequiredService<BugReportWindow>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
@@ -125,6 +138,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<UpdateStartup>();
 
         return services;
     }

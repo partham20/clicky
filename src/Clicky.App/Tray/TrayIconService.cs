@@ -54,6 +54,11 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
     {
         var menu = new ContextMenu { DataContext = viewModel };
 
+        var update = new MenuItem { Command = viewModel.UpdateCommand, FontWeight = FontWeights.SemiBold };
+        update.SetBinding(HeaderedItemsControl.HeaderProperty, new Binding(nameof(TrayViewModel.UpdateHeader)));
+        update.SetBinding(UIElement.VisibilityProperty, new Binding(nameof(TrayViewModel.UpdateReady)) { Converter = new BooleanToVisibilityConverter() });
+        menu.Items.Add(update);
+
         menu.Items.Add(new MenuItem
         {
             Header = "Open Home",
@@ -78,6 +83,7 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
         menu.Items.Add(BuildBuddyStatePreviewMenu());
 
         menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem { Header = "Report a bug…", Command = viewModel.ReportBugCommand });
         menu.Items.Add(new MenuItem { Header = "Quit Clicky", Command = viewModel.QuitCommand });
         return menu;
     }
