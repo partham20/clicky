@@ -7,7 +7,7 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, and later prompts, action schema, backends, agent loop. No Windows APIs |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, and later the agent loop. No Windows APIs |
 | `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
@@ -35,6 +35,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `debug.saveCaptures`: also write every screenshot to `debug\captures\yyyyMMdd-HHmmss.png`, with a red crosshair where the pointer maps to. Off by default; nothing else writes screenshots to disk.
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
+- `claude`: `backend` (`Api` or `Subscription`), `routing` (`Auto`, `AlwaysFast`, `AlwaysDeep`), `apiFastModel` (`claude-haiku-5-5`), `apiDeepModel` (`claude-opus-5-5`), `subscriptionFastModel` (`haiku`), `subscriptionDeepModel` (`opus`), `fastEffort` (`Low`), `deepEffort` (`Medium`), `maxTurns` (40), `idleResetMinutes` (10), `cliPath` (empty finds `claude.exe`). Also in Settings › Claude. The Anthropic key is in Credential Manager as `Clicky/anthropic-api-key` (or `ANTHROPIC_API_KEY` for development).
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
@@ -107,6 +108,17 @@ Replies are spoken sentence by sentence as their text arrives: the buddy shows S
   - **Focus Assist / Do not disturb, presentations, full-screen apps and games.** `SHQueryUserNotificationState` (documented) for presentation mode, full screen and quiet time, plus the shell's own Focus Assist state (undocumented WNF) and Windows 11's Do not disturb setting. Each check fails open, to speaking, if Windows changes underneath it.
 - **Overlays are not full-screen windows.** The shell treats a topmost window the size of the monitor as a full-screen app, so before M4 the buddy's overlays switched on Windows' automatic Focus Assist and reported the user as busy to every app. They now carry the shell's `NonRudeHWND` opt-out.
 - **settings.json** saved as "UTF-8 with BOM" (Notepad and PowerShell can do that) used to count as corrupt; it now loads.
+
+## Claude backends and actions (M5)
+
+Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, both streaming the same events: spoken text as it arrives, then validated actions, then usage and the stop reason.
+
+- **API key** (`AnthropicApiBackend`): the official Anthropic C# SDK, streaming, the screenshot inline as base64, every non-speech action as a strict tool, adaptive thinking with per-tier effort, prompt caching on the fixed system prompt and tools plus automatic caching of history, and the server's default refusal fallback.
+- **Claude subscription** (`ClaudeCodeBackend`): Claude Code headless, `claude -p` with stream-json in and out, so there is no API bill. It runs with no tools, MCP servers, settings, CLAUDE.md, skills or hooks (`--safe-mode`), in an empty folder (`%LocalAppData%\Clicky\claude-code`), without saving the session, and without the API key variables so it uses the subscription. Starting it takes 2-3 s, so one process is kept per conversation: it starts when Talk is pressed (M6) and later turns reuse it; the router switches its model with a control message instead of a restart. Barge-in sends an interrupt and keeps the process warm. Claude Code takes no custom tools, so the model writes actions as `<action>{…}</action>` tags that go through the same validation.
+- **Action schema**: `Clicky.Core/Actions/actions.schema.json` (say, point, highlight, draw, step, click, type, key, scroll, wait, ask_permission, done) is the single source: the API backend makes tools from it, the subscription prompt embeds it, and every action is validated against it and checked against the screenshot (up to 8 px past an edge is pulled in, further is dropped and logged). Speech is plain text rather than a `say` tool call so it streams straight into the sentence speaker; it still comes out as `say` actions in the finished reply.
+- **Prompts** live as Markdown in `Clicky.Core/Prompts` (embedded). The system prompt never changes within a run, so it stays cached; memory is fixed per conversation.
+- **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
+- **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
 
 ## Memory (M11)
 

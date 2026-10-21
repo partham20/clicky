@@ -4,6 +4,8 @@ using Clicky.App.Buddy;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Assistant;
+using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Connectors;
@@ -93,7 +95,13 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();
 
-        // Memory is read into every prompt now; updates start once a backend registers IMemoryModel.
+        // Claude: both backends stay registered so Settings can switch between them live.
+        services.AddSingleton<AnthropicApiBackend>();
+        services.AddSingleton<ClaudeCodeBackend>();
+        services.AddSingleton<ClaudeAssistant>();
+
+        // Memory updates run on the active backend's fast model.
+        services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
         services.AddSingleton(sp => new MemoryStore(paths.MemoryDirectory, sp.GetRequiredService<ILogger<MemoryStore>>()));
         services.AddSingleton(sp => new MemoryService(
             sp.GetRequiredService<MemoryStore>(),
@@ -120,6 +128,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
         services.AddTransient<SpeechSettingsView>();
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
+        services.AddTransient<ClaudeSettingsView>();
+        services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
         services.AddTransient<ConnectorsSettingsView>();
