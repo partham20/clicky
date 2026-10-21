@@ -31,6 +31,14 @@ public interface ISpeechToText
     Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// As <see cref="TranscribeAsync(ReadOnlyMemory{float}, string, CancellationToken)"/>, with a
+    /// prompt that biases the engine towards its words and spellings (names, jargon from the
+    /// personal dictionary). Engines without prompt support ignore it.
+    /// </summary>
+    Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, string? prompt, CancellationToken cancellationToken = default) =>
+        TranscribeAsync(samples, language, cancellationToken);
+
+    /// <summary>
     /// Gets ready for the first request (download and load a model, open connections) so that one
     /// is no slower than the rest. Safe to call more than once; never throws.
     /// </summary>

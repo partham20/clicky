@@ -36,7 +36,8 @@ internal sealed class ReplyCard : Window
     private readonly PixelPoint _anchor;
     private nint _hwnd;
 
-    public ReplyCard(string text, string? reason, ILogger logger)
+    /// <param name="headline">Replaces the "Not spoken: reason" line (dictation uses its own wording).</param>
+    public ReplyCard(string text, string? reason, ILogger logger, string? headline = null)
     {
         _text = text;
         _logger = logger;
@@ -78,7 +79,7 @@ internal sealed class ReplyCard : Window
         header.Children.Add(close);
         header.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(reason) ? "Clicky" : $"Not spoken: {reason}",
+            Text = headline ?? (string.IsNullOrWhiteSpace(reason) ? "Clicky" : $"Not spoken: {reason}"),
             Foreground = Muted,
             FontSize = 11.5,
             TextWrapping = TextWrapping.Wrap,
