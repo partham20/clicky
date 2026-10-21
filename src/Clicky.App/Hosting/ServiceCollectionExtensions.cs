@@ -163,6 +163,8 @@ internal static class ServiceCollectionExtensions
         services.AddTransient<DictationSettingsView>();
         services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
 
+        services.AddRoutines(paths);
+
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
         services.AddSingleton<TrayIconService>();

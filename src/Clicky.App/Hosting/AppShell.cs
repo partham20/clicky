@@ -28,7 +28,8 @@ internal sealed class AppShell(
     Func<ClaudeSettingsView> claudeView,
     Func<MemorySettingsView> memoryView,
     Func<ConnectorsSettingsView> connectorsView,
-    Func<DictationSettingsView> dictationView) : IAppShell
+    Func<DictationSettingsView> dictationView,
+    Func<RoutinesSettingsView> routinesView) : IAppShell
 {
     private PlaceholderWindow? _home;
     private PlaceholderWindow? _settings;
@@ -42,7 +43,7 @@ internal sealed class AppShell(
             $"Settings pages arrive in M18. Until then, edit the file directly; changes apply live.\n\n{paths.SettingsFile}",
             "Show settings.json",
             () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose(),
-            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView(), speechView(), claudeView(), memoryView(), connectorsView(), dictationView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
+            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView(), speechView(), claudeView(), memoryView(), connectorsView(), dictationView(), routinesView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
         {
             Width = 640,
             Height = 820,
