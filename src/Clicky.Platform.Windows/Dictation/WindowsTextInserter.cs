@@ -34,6 +34,9 @@ namespace Clicky.Platform.Windows.Dictation;
 /// </remarks>
 public sealed class WindowsTextInserter : ITextInserter, IDisposable
 {
+    /// <summary>Longer text is pasted: one undo step, and no waiting for hundreds of keystrokes.</summary>
+    public const int MaxTypedChars = 400;
+
     /// <summary>Fields longer than this are not read back or rewritten through ValuePattern.</summary>
     public const int MaxFieldChars = 20_000;
 
@@ -41,16 +44,14 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
     private const int TypingBurst = 64;
     private static readonly TimeSpan TypingPause = TimeSpan.FromMilliseconds(6);
 
-    // Pasting is asynchronous in the target: it reads the clipboard after it handles Ctrl+V.
-    private static readonly TimeSpan PasteSettle = TimeSpan.FromMilliseconds(500);
-
     // The gesture's own keys are usually still coming up when the text is ready.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromMilliseconds(1500);
 
+    // Terminal apps with their own windows. Shells (cmd, powershell, bash) are not listed: they can
+    // also host ordinary GUI windows, and in a console they are caught by its window class.
     private static readonly HashSet<string> TerminalProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
-        "WindowsTerminal.exe", "OpenConsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
-        "wsl.exe", "wslhost.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe", "Hyper.exe",
+        "WindowsTerminal.exe", "OpenConsole.exe", "conhost.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe", "Hyper.exe",
         "Tabby.exe", "putty.exe", "kitty.exe", "ConEmu.exe", "ConEmu64.exe", "FluentTerminal.App.exe", "warp.exe",
     };
 
@@ -65,8 +66,15 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
         "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
     };
 
+    // Editors that drop or repeat characters when Unicode keystrokes arrive faster than they draw
+    // (Windows 11 Notepad turns "into Notepad" into "ppppppppppad" at anything under ~15 ms a
+    // character). Text is pasted there instead.
+    private static readonly HashSet<string> PasteClasses = new(StringComparer.Ordinal) { "RichEditD2DPT" };
+
     private static readonly HashSet<string> NativeFrameworks = new(StringComparer.OrdinalIgnoreCase) { "Win32", "WinForm", "WPF" };
 
+    // Apps seen mangling typed text in this run; they get pasted text from then on.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _typingFailed = new(StringComparer.OrdinalIgnoreCase);
     private readonly ClipboardSwap _clipboard;
     private readonly ILogger<WindowsTextInserter> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -137,7 +145,7 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
 
         if (target.Elevated)
         {
-            await _clipboard.PutTextAsync(text, @private: false, keepSnapshot: false, cancellationToken).ConfigureAwait(false);
+            await _clipboard.CopyAsync(text, cancellationToken).ConfigureAwait(false);
             return new InsertionResult(
                 InsertionMethod.Copied,
                 text,
@@ -162,22 +170,31 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
 
         await WaitForModifiersUpAsync(cancellationToken).ConfigureAwait(false);
 
-        var paste = text.Contains('\n', StringComparison.Ordinal) || Matches(request.Settings.PasteApps, target.ProcessName);
+        var paste = text.Contains('\n', StringComparison.Ordinal)
+            || text.Length > MaxTypedChars
+            || PasteClasses.Contains(target.ElementClass)
+            || Matches(request.Settings.PasteApps, target.ProcessName)
+            || _typingFailed.ContainsKey(target.ProcessName);
         if (!paste && Type(text))
         {
-            return new InsertionResult(InsertionMethod.Typed, text, target.ProcessName, terminal, Problem: null, await ProbeAsync(target, text, cancellationToken).ConfigureAwait(false));
+            var probe = await ProbeAsync(target, text, cancellationToken).ConfigureAwait(false);
+            if (probe is null && target.Text is not null && target.Selection is not null)
+            {
+                // The field can be read but the text isn't in it as typed: this app mangles keystrokes.
+                _typingFailed[target.ProcessName] = true;
+                _logger.LogWarning("Dictation: {App} did not take the typed text as typed; pasting there from now on", target.ProcessName);
+            }
+
+            return new InsertionResult(InsertionMethod.Typed, text, target.ProcessName, terminal, Problem: null, probe);
         }
 
-        var snapshot = await _clipboard.PutTextAsync(text, @private: true, keepSnapshot: true, cancellationToken).ConfigureAwait(false);
-        if (snapshot is null)
+        var outcome = await _clipboard.PasteAsync(text, () => SendPaste(target, terminal), cancellationToken).ConfigureAwait(false);
+        return outcome switch
         {
-            return new InsertionResult(InsertionMethod.None, text, target.ProcessName, terminal, "The clipboard is busy, so Clicky couldn't paste. Copy the text from here.");
-        }
-
-        SendPaste(target, terminal);
-        await Task.Delay(PasteSettle, cancellationToken).ConfigureAwait(false);
-        await _clipboard.RestoreAsync(snapshot, cancellationToken).ConfigureAwait(false);
-        return new InsertionResult(InsertionMethod.Pasted, text, target.ProcessName, terminal, Problem: null, await ProbeAsync(target, text, cancellationToken).ConfigureAwait(false));
+            PasteOutcome.Pasted => new InsertionResult(InsertionMethod.Pasted, text, target.ProcessName, terminal, Problem: null, await ProbeAsync(target, text, cancellationToken).ConfigureAwait(false)),
+            PasteOutcome.NotRead => new InsertionResult(InsertionMethod.Copied, text, target.ProcessName, terminal, $"{target.ProcessName} didn't take the text. It's on the clipboard: press Ctrl+V."),
+            _ => new InsertionResult(InsertionMethod.None, text, target.ProcessName, terminal, "The clipboard is busy, so Clicky couldn't paste. Copy the text from here."),
+        };
     }
 
     private static bool IsTerminal(Target target, IReadOnlyList<string> extraApps) =>
@@ -226,6 +243,12 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
 
     private void PlaceCaret(Target target, int offset)
     {
+        if (target.EditWindow != 0)
+        {
+            SendMessageTimeout(target.EditWindow, EmSetSel, (nuint)offset, offset, SmtoAbortIfHung, 500, out _);
+            return;
+        }
+
         try
         {
             var range = target.Element!.Patterns.Text.Pattern.DocumentRange.Clone();
@@ -286,11 +309,21 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
             offset += count;
             if (offset < text.Length)
             {
-                Thread.Sleep(TypingPause);
+                Pause(TypingPause);
             }
         }
 
         return true;
+    }
+
+    private static void Pause(TimeSpan pause)
+    {
+        // Thread.Sleep rounds up to the 15.6 ms system tick; a short spin keeps the pacing tight.
+        var wait = Stopwatch.StartNew();
+        while (wait.Elapsed < pause)
+        {
+            Thread.Yield();
+        }
     }
 
     private static unsafe void SendPaste(Target target, bool terminal)
@@ -343,21 +376,25 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
             return null;
         }
 
-        var start = selection.Start;
-        if (start + text.Length > now.Length || string.CompareOrdinal(now, start, text, 0, text.Length) != 0)
+        // Apps store line breaks their own way (RichEdit uses \r, Win32 edits \r\n).
+        foreach (var form in new[] { text, text.Replace("\n", "\r", StringComparison.Ordinal), text.Replace("\n", "\r\n", StringComparison.Ordinal) }.Distinct())
         {
-            // The app reformatted it (line endings, autocorrect) or the field scrolled its contents; find it nearby.
-            var found = now.IndexOf(text, Math.Max(0, start - 64), StringComparison.Ordinal);
-            if (found < 0)
+            var start = selection.Start;
+            if (start + form.Length <= now.Length && string.CompareOrdinal(now, start, form, 0, form.Length) == 0)
             {
-                _logger.LogDebug("Dictation: could not find the inserted text in {App} to watch for corrections", target.ProcessName);
-                return null;
+                return new UiaProbe(target.Element, now, start, form.Length);
             }
 
-            start = found;
+            // The field may have scrolled its contents or the app trimmed a space; look nearby.
+            var found = now.IndexOf(form, Math.Max(0, start - 64), StringComparison.Ordinal);
+            if (found >= 0)
+            {
+                return new UiaProbe(target.Element, now, found, form.Length);
+            }
         }
 
-        return new UiaProbe(target.Element, now, start, text.Length);
+        _logger.LogDebug("Dictation: could not find the inserted text in {App} to watch for corrections", target.ProcessName);
+        return null;
     }
 
     /// <summary>The focused window and element, read once per insertion.</summary>
@@ -374,7 +411,8 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
         string? Text,
         (int Start, int End)? Selection,
         char? CharBeforeCaret,
-        bool CanSetValue)
+        bool CanSetValue,
+        nint EditWindow = 0)
     {
         public static Target Inspect(UIA3Automation automation, ILogger logger)
         {
@@ -434,6 +472,15 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
                     }
                 }
 
+                // A classic Edit control (Win32, WinForms) often has no TextPattern; it reports
+                // its selection itself, in the same units as its value.
+                var editWindow = elementClass.Contains("EDIT", StringComparison.OrdinalIgnoreCase) ? properties.NativeWindowHandle.ValueOrDefault : 0;
+                if (selection is null && value is not null && editWindow != 0 && EditSelection(editWindow) is { } native && native.End <= value.Length)
+                {
+                    selection = native;
+                    before = native.Start > 0 ? value[native.Start - 1] : null;
+                }
+
                 // An empty field has its caret at the start whatever the selection API says.
                 if (selection is null && value is { Length: 0 })
                 {
@@ -449,13 +496,26 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
                     && selection is { } s && s.Item2 <= value.Length
                     && (text is null || string.Equals(text, value, StringComparison.Ordinal));
 
-                return new Target(window, windowClass, processName, false, element, elementClass, framework, controlType, value, text, selection, before, canSet);
+                return new Target(window, windowClass, processName, false, element, elementClass, framework, controlType, value, text, selection, before, canSet, editWindow);
             }
             catch (Exception ex) when (ex is COMException or TimeoutException or InvalidOperationException or ArgumentException)
             {
                 logger.LogDebug(ex, "Dictation: could not inspect the focused element in {App}", processName);
                 return new Target(window, windowClass, processName, false, null, string.Empty, string.Empty, ControlType.Unknown, null, null, null, null, false);
             }
+        }
+
+        private static (int Start, int End)? EditSelection(nint edit)
+        {
+            if (SendMessageTimeout(edit, EmGetSel, 0, 0, SmtoAbortIfHung, 500, out var packed) == 0)
+            {
+                return null;
+            }
+
+            // LOWORD start, HIWORD end: exact up to 65535, and fields here are at most MaxFieldChars.
+            var start = (int)(packed & 0xFFFF);
+            var end = (int)((packed >> 16) & 0xFFFF);
+            return start <= end ? (start, end) : null;
         }
 
         private static unsafe string ClassOf(nint hwnd)

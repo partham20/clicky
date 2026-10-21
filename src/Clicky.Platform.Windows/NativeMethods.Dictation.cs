@@ -15,8 +15,15 @@ internal static partial class NativeMethods
     internal const ushort VkLWin = 0x5B;
     internal const ushort VkRWin = 0x5C;
 
+    internal const uint EmGetSel = 0x00B0;
+    internal const uint EmSetSel = 0x00B1;
+    internal const uint SmtoAbortIfHung = 0x0002;
+
     internal const uint CfUnicodeText = 13;
     internal const uint GmemMoveable = 0x0002;
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
+    internal static partial nint SendMessageTimeout(nint hWnd, uint msg, nuint wParam, nint lParam, uint fuFlags, uint uTimeout, out nuint lpdwResult);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -43,7 +50,7 @@ internal static partial class NativeMethods
     internal static partial uint RegisterClipboardFormat(string lpszFormat);
 
     [LibraryImport("user32.dll")]
-    internal static partial uint GetClipboardSequenceNumber();
+    internal static partial nint GetClipboardOwner();
 
     [LibraryImport("user32.dll", EntryPoint = "VkKeyScanExW")]
     internal static partial short VkKeyScanEx(ushort ch, nint dwhkl);
