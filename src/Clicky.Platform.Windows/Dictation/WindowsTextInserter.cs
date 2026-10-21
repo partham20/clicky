@@ -115,6 +115,13 @@ public sealed class WindowsTextInserter : ITextInserter, IDisposable
         }
     }
 
+    /// <summary>The foreground app's exe name, for prompts and logs.</summary>
+    public static string ForegroundAppName()
+    {
+        ProcessElevation.IsWindowElevated(GetForegroundWindow(), out var name);
+        return name;
+    }
+
     /// <summary>What dictation would see in the focused window right now, for diagnostics and tests.</summary>
     public string DescribeTarget()
     {

@@ -1,3 +1,5 @@
+using Clicky.Core.Dictation;
+
 namespace Clicky.Core.Settings;
 
 /// <summary>settings.dictation: speaking text into other apps (hold Ctrl+Win, or double-tap it for hands-free).</summary>
@@ -13,7 +15,8 @@ public sealed record DictationSettings(
     bool LearnCorrections = true,
     int KeepHistoryDays = DictationSettings.DefaultKeepHistoryDays,
     IReadOnlyList<string>? TerminalApps = null,
-    IReadOnlyList<string>? PasteApps = null)
+    IReadOnlyList<string>? PasteApps = null,
+    DictationCleanup Cleanup = DictationCleanup.Auto)
 {
     public const int DefaultMaxMinutes = 30;
     public const int MaxMaxMinutes = 120;
@@ -47,6 +50,9 @@ public sealed record DictationSettings(
     /// <summary>Apps that drop typed Unicode input (some remote desktops and games): text is pasted there instead.</summary>
     public IReadOnlyList<string> PasteApps { get; init; } = PasteApps ?? [];
 
+    /// <summary>When the fast model tidies punctuation and grammar (never the words).</summary>
+    public DictationCleanup Cleanup { get; init; } = Cleanup;
+
     public TimeSpan MaxDuration => TimeSpan.FromMinutes(MaxMinutes);
 
     public DictationSettings Normalize() => this with
@@ -55,6 +61,7 @@ public sealed record DictationSettings(
         KeepHistoryDays = Math.Clamp(KeepHistoryDays, 0, MaxKeepHistoryDays),
         TerminalApps = Clean(TerminalApps),
         PasteApps = Clean(PasteApps),
+        Cleanup = Enum.IsDefined(Cleanup) ? Cleanup : DictationCleanup.Auto,
     };
 
     // Records compare collections by reference; settings change detection needs content equality.
@@ -65,6 +72,7 @@ public sealed record DictationSettings(
         && SpokenCommands == other.SpokenCommands
         && LearnCorrections == other.LearnCorrections
         && KeepHistoryDays == other.KeepHistoryDays
+        && Cleanup == other.Cleanup
         && (TerminalApps ?? []).SequenceEqual(other.TerminalApps ?? [], StringComparer.Ordinal)
         && (PasteApps ?? []).SequenceEqual(other.PasteApps ?? [], StringComparer.Ordinal);
 

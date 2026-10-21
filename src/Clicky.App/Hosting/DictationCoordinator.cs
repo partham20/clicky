@@ -1,11 +1,16 @@
 using System.Threading.Channels;
 using System.Windows.Threading;
+using System.Runtime.CompilerServices;
 using Clicky.App.Buddy;
+using Clicky.Core.Assistant;
 using Clicky.Core.Buddy;
+using Clicky.Core.Capture;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
+using Clicky.Platform.Windows.Dictation;
+using Clicky.Platform.Windows.Input;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -31,6 +36,8 @@ internal sealed class DictationCoordinator(
     ITextInserter inserter,
     CorrectionWatcher corrections,
     DictationHistory history,
+    ScreenDrafter drafter,
+    ICaptureService capture,
     VoiceOutput speech,
     IBuddyPresence presence,
     ISettingsStore settings,
@@ -40,6 +47,7 @@ internal sealed class DictationCoordinator(
 {
     private const string ListeningCaption = "Dictating…";
     private const string HandsFreeCaption = "Dictating hands-free. Double-tap Ctrl+Win to stop.";
+    private const string DraftingCaption = "Writing a reply…";
     private const int PreviewChars = 90;
     private static readonly TimeSpan ProblemCaptionTime = TimeSpan.FromSeconds(8);
 
@@ -52,6 +60,9 @@ internal sealed class DictationCoordinator(
     private DictationSession? _session;
     private bool _armed;
     private int _generation;
+
+    // Hands-free sessions whose first words asked for a draft: their pieces are not typed.
+    private readonly ConditionalWeakTable<DictationSession, object> _drafting = [];
 
     // Insert loop only.
     private char? _previousChar;
@@ -213,7 +224,12 @@ internal sealed class DictationCoordinator(
     private void OnPiece(DictationSession session, DictationPiece piece)
     {
         var settingsNow = settings.Current.Dictation;
-        if (session.Mode == DictationMode.HandsFree && settingsNow.TypeWhileSpeaking)
+        if (piece.Index == 0 && ScreenDrafter.FindRequest(piece.Text) is not null)
+        {
+            _drafting.TryAdd(session, new object());
+        }
+
+        if (session.Mode == DictationMode.HandsFree && settingsNow.TypeWhileSpeaking && !_drafting.TryGetValue(session, out _))
         {
             _inserts.Writer.TryWrite(new InsertJob(piece.Text, Insert: true));
         }
@@ -267,10 +283,11 @@ internal sealed class DictationCoordinator(
             session.Dispose();
         }
 
-        var typedAlready = session.Mode == DictationMode.HandsFree && settings.Current.Dictation.TypeWhileSpeaking;
+        var drafting = _drafting.TryGetValue(session, out _);
+        var typedAlready = session.Mode == DictationMode.HandsFree && settings.Current.Dictation.TypeWhileSpeaking && !drafting;
         if (result.Text.Length > 0 && !typedAlready)
         {
-            _inserts.Writer.TryWrite(new InsertJob(result.Text, insert));
+            _inserts.Writer.TryWrite(new InsertJob(result.Text, insert) { Draft = insert && drafting });
         }
 
         if (result.Problem is { } problem)
@@ -310,8 +327,18 @@ internal sealed class DictationCoordinator(
 
             try
             {
+                var text = job.Text;
+                if (job.Draft)
+                {
+                    text = await DraftAsync(job.Text).ConfigureAwait(false);
+                    if (text.Length == 0)
+                    {
+                        continue;
+                    }
+                }
+
                 var dictationSettings = settings.Current.Dictation;
-                var result = await inserter.InsertAsync(new InsertionRequest(job.Text, _previousChar, dictationSettings), _stopping.Token).ConfigureAwait(false);
+                var result = await inserter.InsertAsync(new InsertionRequest(text, _previousChar, dictationSettings), _stopping.Token).ConfigureAwait(false);
                 switch (result.Method)
                 {
                     case InsertionMethod.ValuePattern or InsertionMethod.Typed or InsertionMethod.Pasted:
@@ -341,6 +368,46 @@ internal sealed class DictationCoordinator(
                 logger.LogError(ex, "Dictation: inserting failed");
                 ShowCard(job.Text, "Couldn't type this. Here's what you said:");
             }
+        }
+    }
+
+    /// <summary>"Type a reply to this": Claude reads the screen and writes the reply. Empty if it couldn't.</summary>
+    private async Task<string> DraftAsync(string request)
+    {
+        presence.SetState(BuddyState.Thinking);
+        presence.SetCaption(DraftingCaption);
+        RequestScreenshot? screenshot = null;
+        try
+        {
+            var mode = settings.Current.Capture.Mode;
+            var shot = await capture.CaptureAsync(new CaptureTarget(mode, CursorReader.TryGet(out var cursor, out _) ? cursor : null), _stopping.Token).ConfigureAwait(false);
+            screenshot = new RequestScreenshot(shot.Png, shot.Geometry);
+        }
+        catch (CaptureException ex)
+        {
+            logger.LogWarning(ex, "Dictation draft: no screenshot; drafting from the words alone");
+        }
+
+        try
+        {
+            var draft = await drafter.DraftAsync(request, screenshot, WindowsTextInserter.ForegroundAppName(), _stopping.Token).ConfigureAwait(false);
+            if (draft.Length == 0)
+            {
+                ShowCaption("Claude didn't write a reply. Try again with a bit more detail.", ProblemCaptionTime);
+            }
+            else if (presence.Caption == DraftingCaption)
+            {
+                presence.SetCaption(null);
+            }
+
+            return draft;
+        }
+        catch (ClaudeBackendException ex)
+        {
+            logger.LogWarning(ex, "Dictation draft failed ({Failure})", ex.Failure);
+            ShowCaption(ex.Message, ProblemCaptionTime);
+            ShowCard(request, $"Couldn't write the reply: {ex.Message} Here's what you said:");
+            return string.Empty;
         }
     }
 
@@ -386,5 +453,8 @@ internal sealed class DictationCoordinator(
         public static InsertJob Done { get; } = new(string.Empty, Insert: false) { IsDone = true };
 
         public bool IsDone { get; init; }
+
+        /// <summary>The text is a drafting request, not text to type.</summary>
+        public bool Draft { get; init; }
     }
 }

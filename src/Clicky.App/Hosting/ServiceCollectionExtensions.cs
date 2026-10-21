@@ -121,7 +121,8 @@ internal static class ServiceCollectionExtensions
 
         services.AddSingleton(sp => new PersonalVocabulary(paths.DictionaryFile, sp.GetRequiredService<ILogger<PersonalVocabulary>>()));
         services.AddSingleton(sp => new DictationHistory(paths, TimeProvider.System, sp.GetRequiredService<ILogger<DictationHistory>>()));
-        services.AddSingleton<IDictationPolisher, RulesOnlyPolisher>();
+        services.AddSingleton<IDictationPolisher, ClaudeDictationPolisher>();
+        services.AddSingleton<ScreenDrafter>();
         services.AddSingleton(sp => new DictationInput(
             sp.GetRequiredService<IMicrophone>(),
             sp.GetRequiredService<Func<SpeechEngine, ISpeechToText>>(),

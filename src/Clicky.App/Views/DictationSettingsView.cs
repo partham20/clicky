@@ -29,6 +29,7 @@ internal sealed class DictationSettingsView : ContentControl
     private readonly CheckBox _spokenCommands = new() { Content = "Say \"new line\" or \"new paragraph\" for line breaks" };
     private readonly CheckBox _learn = new() { Content = "Learn words I correct by hand within 20 seconds" };
     private readonly ComboBox _keepHistory = new() { MinWidth = 160, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly ComboBox _cleanup = new() { MinWidth = 320, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ObservableCollection<WordRow> _rows = [];
     private readonly DataGrid _grid;
     private readonly TextBlock _status = new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -47,6 +48,17 @@ internal sealed class DictationSettingsView : ContentControl
         {
             _keepHistory.Items.Add(new ComboBoxItem { Content = days == 0 ? "Don't keep" : $"{days} days", Tag = days });
         }
+
+        _cleanup.Items.Add(new ComboBoxItem { Content = "With an API key only (fast, under a second)", Tag = DictationCleanup.Auto });
+        _cleanup.Items.Add(new ComboBoxItem { Content = "Always (seconds per sentence on a subscription)", Tag = DictationCleanup.Always });
+        _cleanup.Items.Add(new ComboBoxItem { Content = "Off: as transcribed", Tag = DictationCleanup.Off });
+        _cleanup.SelectionChanged += (_, _) =>
+        {
+            if (_cleanup.SelectedItem is ComboBoxItem { Tag: DictationCleanup cleanup })
+            {
+                Save(s => s with { Cleanup = cleanup });
+            }
+        };
 
         _grid = new DataGrid
         {
@@ -118,6 +130,7 @@ internal sealed class DictationSettingsView : ContentControl
         panel.Children.Add(new TextBlock
         {
             Text = "Hold Ctrl+Win and speak; let go and the text goes where your cursor is. Double-tap Ctrl+Win to dictate hands-free, and double-tap again to stop. " +
+                "Start with \"type a reply to this\" and Claude reads the screen and writes the reply in your voice. " +
                 "In terminals, line breaks become spaces so nothing runs by accident. Language, engine and microphone are the Voice settings above.",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.7,
@@ -127,6 +140,9 @@ internal sealed class DictationSettingsView : ContentControl
         panel.Children.Add(_typeWhileSpeaking);
         panel.Children.Add(_spokenCommands);
         panel.Children.Add(_learn);
+
+        panel.Children.Add(Label("Tidy punctuation and grammar with Claude's fast model (never changes your words)"));
+        panel.Children.Add(_cleanup);
 
         panel.Children.Add(Label("Keep a text copy of every dictation"));
         panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Children = { _keepHistory, openHistory } });
@@ -163,6 +179,7 @@ internal sealed class DictationSettingsView : ContentControl
             _typeWhileSpeaking.IsChecked = d.TypeWhileSpeaking;
             _spokenCommands.IsChecked = d.SpokenCommands;
             _learn.IsChecked = d.LearnCorrections;
+            _cleanup.SelectedItem = _cleanup.Items.Cast<ComboBoxItem>().First(i => (DictationCleanup)i.Tag == d.Cleanup);
             _keepHistory.SelectedItem = _keepHistory.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (int)i.Tag == d.KeepHistoryDays)
                 ?? AddCustomDays(d.KeepHistoryDays);
         }
