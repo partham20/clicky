@@ -60,6 +60,12 @@ public sealed class ClickyPaths
     public string ClaudeCodeDirectory => Path.Combine(LocalRoot, "claude-code");
 
     /// <summary>
+    /// Clicky's own browser profile (computer use drives it over CDP). Separate from the user's
+    /// everyday profile, so their own tabs and sign-ins are never touched unless they sign in here.
+    /// </summary>
+    public string BrowserProfileDirectory => Path.Combine(LocalRoot, "browser");
+
+    /// <summary>
     /// %AppData%\Clicky (roaming) plus %LocalAppData%\Clicky for models. CLICKY_DATA_DIR overrides
     /// both for dev/test.
     /// </summary>

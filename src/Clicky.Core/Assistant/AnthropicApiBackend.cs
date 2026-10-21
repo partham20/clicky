@@ -6,6 +6,7 @@ using Anthropic;
 using Anthropic.Exceptions;
 using Anthropic.Models.Beta.Messages;
 using Clicky.Core.Actions;
+using Clicky.Core.Connectors;
 using Clicky.Core.Prompts;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
@@ -19,11 +20,14 @@ namespace Clicky.Core.Assistant;
 /// the fixed system prompt and tools.
 /// </summary>
 /// <remarks>
+/// Connected apps' tools (M16) are offered as plain tools after the actions, and on agent work the
+/// click/type/key/scroll tools give way to Anthropic's computer toolset (see <see cref="ComputerToolset"/>).
 /// History is sent back append-only with thinking blocks unchanged. The occasional trim (see
 /// <see cref="HistoryLimits"/>) edits the front, which would make the API reject later thinking
 /// blocks on newer accounts, so requests ask it to drop such blocks instead of failing.
 /// </remarks>
-public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore settings, ILogger<AnthropicApiBackend> logger) : IClaudeBackend, IDisposable
+public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore settings, ILogger<AnthropicApiBackend> logger, IConnectorTools? connectors = null)
+    : IClaudeBackend, IDisposable
 {
     /// <summary>Room for adaptive thinking plus a spoken answer; replies stream, so a large cap costs nothing.</summary>
     public const int MaxTokens = 16_000;
@@ -37,13 +41,21 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     /// <summary>Lets a request ask for invalidated thinking blocks to be dropped rather than rejected.</summary>
     private const string ThinkingBindingBeta = "thinking-binding-controls-2026-08-01";
 
-    private const string ToolResultText = "Shown to the user.";
+    /// <summary>How long the first request after launch waits for connectors that are still starting.</summary>
+    private static readonly TimeSpan s_connectorWait = TimeSpan.FromSeconds(1.5);
 
-    private static readonly Lazy<List<BetaToolUnion>> s_tools = new(BuildTools);
+    /// <summary>Clicky's own tools that the computer toolset replaces.</summary>
+    private static readonly HashSet<string> s_toolsetReplaces = ["click", "type", "key", "scroll", "wait"];
+
+    private static readonly Lazy<List<BetaToolUnion>> s_actionTools = new(() => BuildActionTools(toolset: false));
+    private static readonly Lazy<List<BetaToolUnion>> s_toolsetActionTools = new(() => BuildActionTools(toolset: true));
 
     private readonly Lock _gate = new();
     private AnthropicClient? _client;
     private string? _clientKey;
+
+    // Set when the API refused the computer toolset (an older model, or a platform without it); own tools from then on.
+    private volatile bool _toolsetRefused;
 
     public ClaudeBackendKind Kind => ClaudeBackendKind.Api;
 
@@ -78,9 +90,13 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             ClaudeFailure.NotConfigured, "Clicky needs an Anthropic API key. Add one in Settings › Claude, or switch to your Claude subscription there.");
         var client = Client(key);
         var userText = PromptLibrary.UserText(request);
-        var parameters = BuildParameters(conversation, request, userText, model, effort);
-        var limits = new HistoryLimits(settings.Current.Claude.MaxTurns);
-        var reply = new StreamState(request.Screenshot);
+        var current = settings.Current;
+        var useToolset = current.Agent.ComputerToolset && current.Agent.Enabled && !_toolsetRefused;
+        IReadOnlyList<ConnectorTool> connectorTools = connectors is null ? [] : await connectors.GetToolsAsync(s_connectorWait, cancellationToken).ConfigureAwait(false);
+        var parameters = BuildParameters(conversation, request, userText, model, effort, connectorTools, useToolset);
+        var results = DefaultToolResults.Resolve(conversation.PendingToolCalls, request.Step?.Results ?? conversation.UnsentResults);
+        var limits = new HistoryLimits(current.Claude.MaxTurns);
+        var reply = new StreamState(request.Screenshot, connectors);
         var stopwatch = Stopwatch.StartNew();
 
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -108,6 +124,22 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 }
                 catch (Exception ex) when (Describe(ex, model) is { } failure)
                 {
+                    if (useToolset && !reply.Started && IsToolsetRefusal(failure))
+                    {
+                        // Safety net: never let the toolset break Talk. Retry once with Clicky's own tools.
+                        logger.LogWarning(ex, "The API refused the computer toolset for {Model}; using Clicky's own computer tools from now on", model);
+                        _toolsetRefused = true;
+                        useToolset = false;
+                        parameters = BuildParameters(conversation, request, userText, model, effort, connectorTools, useToolset);
+                        if (stream is not null)
+                        {
+                            await stream.DisposeAsync().ConfigureAwait(false);
+                            stream = null;
+                        }
+
+                        continue;
+                    }
+
                     logger.LogWarning(ex, "Claude API request failed ({Failure})", failure.Failure);
                     throw failure;
                 }
@@ -143,7 +175,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             // A cancelled reply (barge-in) still happened as far as the user is concerned: keep what was said.
             if (reply.Completed || reply.HasText)
             {
-                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now, request.Attachments), limits);
+                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now, request.Attachments) with { Results = results.Count > 0 ? results : null }, limits);
             }
         }
     }
@@ -191,18 +223,25 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         }
     }
 
-    internal static MessageCreateParams BuildParameters(Conversation conversation, ClaudeRequest request, string userText, string model, ClaudeEffort effort)
+    internal static MessageCreateParams BuildParameters(
+        Conversation conversation,
+        ClaudeRequest request,
+        string userText,
+        string model,
+        ClaudeEffort effort,
+        IReadOnlyList<ConnectorTool>? connectorTools = null,
+        bool computerToolset = false)
     {
         var messages = new List<BetaMessageParam>();
         IReadOnlyList<ToolCallRecord> pending = [];
         foreach (var turn in conversation.Turns)
         {
-            messages.Add(UserMessage(pending, turn.Screenshot, turn.UserText, turn.Attachments));
+            messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, turn.Results), turn.Screenshot, turn.UserText, turn.Attachments));
             messages.Add(AssistantMessage(turn));
             pending = turn.ToolCalls;
         }
 
-        messages.Add(UserMessage(pending, request.Screenshot?.Png, userText, request.Attachments));
+        messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, request.Step?.Results ?? conversation.UnsentResults), request.Screenshot?.Png, userText, request.Attachments));
 
         return new MessageCreateParams
         {
@@ -211,7 +250,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             Betas = [FallbackBeta, ThinkingBindingBeta],
             Fallbacks = new Default(),
             System = SystemBlocks(PromptLibrary.SystemPrompt(ActionDelivery.Tools), conversation.Memory),
-            Tools = s_tools.Value,
+            Tools = Tools(connectorTools ?? [], computerToolset),
             ToolChoice = new BetaToolChoiceAuto(),
             Thinking = new BetaThinkingConfigAdaptive
             {
@@ -237,12 +276,22 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         return blocks;
     }
 
-    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, byte[]? png, string text, IReadOnlyList<RequestAttachment>? attachments)
+    /// <param name="results">One per pending call, in the same order (see <see cref="DefaultToolResults.Resolve"/>).</param>
+    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, IReadOnlyList<ToolOutcome> results, byte[]? png, string text, IReadOnlyList<RequestAttachment>? attachments)
     {
         var content = new List<BetaContentBlockParam>();
-        foreach (var call in pending)
+        for (var i = 0; i < pending.Count; i++)
         {
-            content.Add(new BetaToolResultBlockParam { ToolUseID = call.Id, Content = ToolResultText });
+            var result = results[i];
+            content.Add(new BetaToolResultBlockParam
+            {
+                ToolUseID = pending[i].Id,
+                Content = result.Text,
+                IsError = result.IsError ? true : null,
+
+                // Toolset results must name their toolset or the API rejects them.
+                ToolsetName = pending[i].ToolsetName,
+            });
         }
 
         // Documents and pictures before the screenshot and the question, like a person handing them over first.
@@ -298,6 +347,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             {
                 ID = call.Id,
                 Name = call.Name,
+                ToolsetName = call.ToolsetName,
                 Input = input.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone()),
             });
         }
@@ -310,11 +360,63 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         return new BetaMessageParam { Role = Role.Assistant, Content = content };
     }
 
-    private static List<BetaToolUnion> BuildTools()
+    /// <summary>
+    /// Actions first (fixed, so the cache prefix holds), then the toolset, then connector tools by
+    /// name. Connector tools change only when connections do.
+    /// </summary>
+    private static List<BetaToolUnion> Tools(IReadOnlyList<ConnectorTool> connectorTools, bool computerToolset)
+    {
+        var tools = new List<BetaToolUnion>(computerToolset ? s_toolsetActionTools.Value : s_actionTools.Value);
+        if (computerToolset)
+        {
+            tools.Add(ToolsetTool());
+        }
+
+        foreach (var tool in connectorTools.OrderBy(t => t.Name, StringComparer.Ordinal))
+        {
+            if (tool.InputSchema.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            tools.Add(new BetaTool
+            {
+                Name = tool.Name,
+                Description = tool.Description,
+
+                // Not strict: servers write schemas strict mode can't take. The server validates its own input.
+                InputSchema = InputSchema.FromRawUnchecked(tool.InputSchema.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone())),
+            });
+        }
+
+        return tools;
+    }
+
+    private static BetaComputerToolset20260801 ToolsetTool() => new()
+    {
+        Configs = new BetaComputerToolsetConfigs
+        {
+            Zoom = new BetaComputerZoomConfig { Enabled = false },
+            MouseMove = new BetaComputerMouseMoveConfig { Enabled = false },
+            LeftClickDrag = new BetaComputerLeftClickDragConfig { Enabled = false },
+            LeftMouseDown = new BetaComputerLeftMouseDownConfig { Enabled = false },
+            LeftMouseUp = new BetaComputerLeftMouseUpConfig { Enabled = false },
+            HoldKey = new BetaComputerHoldKeyConfig { Enabled = false },
+            CursorPosition = new BetaComputerCursorPositionConfig { Enabled = false },
+        },
+    };
+
+    private static bool IsToolsetRefusal(ClaudeBackendException failure) =>
+        failure.Failure == ClaudeFailure.BadRequest
+        && (failure.Message.Contains("toolset", StringComparison.OrdinalIgnoreCase) || failure.Message.Contains("computer", StringComparison.OrdinalIgnoreCase));
+
+    private static List<BetaToolUnion> BuildActionTools(bool toolset)
     {
         var schema = ActionSchema.Default;
         var tools = new List<BetaToolUnion>();
-        foreach (var name in schema.Names.Where(n => n != "say"))
+
+        // say is the plain text; use_tool is for action tags (here connector tools are real tools).
+        foreach (var name in schema.Names.Where(n => n is not ("say" or "use_tool") && !(toolset && s_toolsetReplaces.Contains(n))))
         {
             var input = schema.ToolInputSchema(name);
             using var document = JsonDocument.Parse(input.ToJsonString());
@@ -389,11 +491,12 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     }
 
     /// <summary>Turns stream events into reply events and remembers what to store in history.</summary>
-    private sealed class StreamState(RequestScreenshot? screenshot)
+    private sealed class StreamState(RequestScreenshot? screenshot, IConnectorTools? connectors)
     {
         private readonly Dictionary<long, Block> _blocks = [];
         private readonly List<ClickyAction> _actions = [];
         private readonly List<ToolCallRecord> _toolCalls = [];
+        private readonly List<ReplyToolCall> _calls = [];
         private readonly List<ThinkingRecord> _thinking = [];
         private readonly StringBuilder _text = new();
         private readonly StringBuilder _spoken = new();
@@ -410,8 +513,12 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
 
         public bool HasText => _spoken.Length > 0;
 
+        /// <summary>The API accepted the request (the stream started).</summary>
+        public bool Started { get; private set; }
+
         public IEnumerable<ReplyEvent> Handle(BetaRawMessageStreamEvent streamEvent, TimeSpan elapsed, ILogger logger)
         {
+            Started = true;
             if (streamEvent.TryPickStart(out var start))
             {
                 _model = start.Message.Model;
@@ -426,6 +533,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 {
                     block.ToolId = toolUse.ID;
                     block.ToolName = toolUse.Name;
+                    block.ToolsetName = toolUse.ToolsetName;
                 }
                 else if (blockStart.ContentBlock.TryPickBetaThinking(out _))
                 {
@@ -509,7 +617,8 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 _firstText,
                 elapsed,
                 _model ?? requestedModel,
-                stop == ReplyStop.Refused ? _refusal : null);
+                stop == ReplyStop.Refused ? _refusal : null,
+                [.. _calls]);
         }
 
         public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at, IReadOnlyList<RequestAttachment>? attachments) => new(
@@ -526,25 +635,56 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         {
             FlushSay();
             var json = block.Json.Length == 0 ? "{}" : block.Json.ToString();
-
-            // Every tool_use must be answered next turn, valid or not, so record it either way.
-            _toolCalls.Add(new ToolCallRecord(block.ToolId!, name, ValidJsonOrEmpty(json)));
-            var parsed = ActionParser.ParseToolCall(name, json);
+            var parsed = Parse(block, name, json);
             if (parsed.IsValid && screenshot is not null)
             {
                 parsed = ActionBounds.Check(parsed.Action!, screenshot.Geometry.ImageWidth, screenshot.Geometry.ImageHeight);
             }
 
+            // Every tool_use must be answered next turn, valid or not, so record it either way.
+            var call = new ToolCallRecord(block.ToolId!, name, ValidJsonOrEmpty(json), parsed.Error is null, parsed.Error, block.ToolsetName);
+            _toolCalls.Add(call);
             if (parsed.IsValid)
             {
                 _actions.Add(parsed.Action!);
                 yield return new ReplyAction(parsed.Action!);
             }
-            else
+            else if (parsed.Error is not null)
             {
                 logger.LogWarning("Dropped {Action} from Claude: {Reason}. Input: {Json}", name, parsed.Error, json);
-                yield return new ReplyActionRejected(name, parsed.Error!);
+                yield return new ReplyActionRejected(name, parsed.Error);
             }
+
+            var toolCall = new ReplyToolCall(call, parsed.Action);
+            _calls.Add(toolCall);
+            yield return toolCall;
+        }
+
+        /// <summary>A toolset member, a connector tool or one of Clicky's actions. A toolset screenshot is neither valid nor an error.</summary>
+        private ActionParseResult Parse(Block block, string name, string json)
+        {
+            if (block.ToolsetName == ComputerToolset.ToolsetName)
+            {
+                var (action, error) = ComputerToolset.Map(name, json);
+                return action is not null ? ActionParseResult.Valid(action) : new ActionParseResult(null, name, error);
+            }
+
+            if (connectors?.IsConnectorTool(name) == true)
+            {
+                try
+                {
+                    using var document = JsonDocument.Parse(json);
+                    return document.RootElement.ValueKind == JsonValueKind.Object
+                        ? ActionParseResult.Valid(new UseToolAction(name, document.RootElement.Clone()))
+                        : ActionParseResult.Invalid(name, "input must be an object");
+                }
+                catch (JsonException ex)
+                {
+                    return ActionParseResult.Invalid(name, $"input is not valid JSON ({ex.Message})");
+                }
+            }
+
+            return ActionParser.ParseToolCall(name, json);
         }
 
         private void FlushSay()
@@ -574,6 +714,8 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             public string? ToolId { get; set; }
 
             public string? ToolName { get; set; }
+
+            public string? ToolsetName { get; set; }
 
             public bool IsThinking { get; set; }
 
