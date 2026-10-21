@@ -2,9 +2,11 @@ using System.Net.Http;
 using System.Windows.Threading;
 using Clicky.App.Annotations;
 using Clicky.App.Buddy;
+using Clicky.App.Ink;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.App.Views.Home;
+using Clicky.App.Walkthroughs;
 using Clicky.Core;
 using Clicky.Core.Annotations;
 using Clicky.Core.Assistant;
@@ -12,16 +14,23 @@ using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Clickys;
+using Clicky.Core.Diagnostics;
 using Clicky.Core.Connectors;
 using Clicky.Core.Dictation;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Ink;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
+using Clicky.Core.Skills;
+using Clicky.Core.Talk;
+using Clicky.Core.Updates;
 using Clicky.Core.Voice;
+using Clicky.Core.Walkthroughs;
 using Clicky.Platform.Windows.Audio;
 using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Dictation;
+using Clicky.Platform.Windows.Display;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
@@ -29,6 +38,7 @@ using Clicky.Platform.Windows.Shell;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Speech;
 using Clicky.Platform.Windows.Startup;
+using Clicky.Platform.Windows.Walkthroughs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -105,6 +115,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnthropicApiBackend>();
         services.AddSingleton<ClaudeCodeBackend>();
         services.AddSingleton<ClaudeAssistant>();
+        services.AddSingleton<IClaudeAssistant>(sp => sp.GetRequiredService<ClaudeAssistant>());
 
         // Memory updates run on the active backend's fast model.
         services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
@@ -116,6 +127,12 @@ internal static class ServiceCollectionExtensions
             sp.GetService<IMemoryModel>()));
         services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
 
+        services.AddSingleton<IUpdateBackend, VelopackUpdateBackend>();
+        services.AddSingleton(sp => new UpdateService(
+            sp.GetRequiredService<IUpdateBackend>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<ILogger<UpdateService>>()));
+        services.AddSingleton(sp => new BugReportWriter(paths, sp.GetRequiredService<ILogger<BugReportWriter>>()));
         // M16 connectors: backends and the agent loop take IConnectorTools.
         services.AddSingleton<IBrowserLauncher, ShellBrowserLauncher>();
         services.AddSingleton<ConnectorSecrets>();
@@ -160,6 +177,59 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnnotationRenderer>();
         services.AddSingleton<IAnnotationRenderer>(sp => sp.GetRequiredService<AnnotationRenderer>());
         services.AddSingleton<AnnotationDemo>();
+
+        // M9 ink trail: the talk loop records the pointer during Talk and attaches it to the request.
+        services.AddSingleton<InkTrailService>();
+        services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
+        services.AddSingleton<InkTrailDemo>();
+
+        // M6 Talk: the computer-use agent (M13) is optional; TalkLoop hands over to it when registered.
+        services.AddSingleton(sp => new TalkLoop(
+            sp.GetRequiredService<IClaudeAssistant>(),
+            sp.GetRequiredService<IMemoryService>(),
+            sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<IInkTrailService>(),
+            sp.GetRequiredService<ILogger<TalkLoop>>(),
+            sp.GetService<IComputerAgent>(),
+            walkthroughs: sp.GetRequiredService<IWalkthroughs>(),
+            context: conversation => sp.GetRequiredService<IAppSkills>().ContextFor(conversation, sp.GetRequiredService<IForegroundApp>().Current())));
+        services.AddSingleton<TalkAnswerer>();
+        services.AddSingleton<HiddenBuddyCaption>();
+
+        // M8 walkthroughs and app skills. The talk loop passes reply events to IWalkthroughs.Observe;
+        // the engine's own "what next?" requests go through SwitchableWalkthroughTurns.
+        services.AddSingleton(sp => new AppSkillLibrary(paths.SkillsDirectory, sp.GetRequiredService<ILogger<AppSkillLibrary>>()));
+        services.AddSingleton<IAppSkills>(sp => sp.GetRequiredService<AppSkillLibrary>());
+        services.AddSingleton<IForegroundApp, WindowsForegroundApp>();
+        services.AddSingleton<IStepWatcher, WindowsStepWatcher>();
+        services.AddSingleton(sp =>
+        {
+            var assistant = sp.GetRequiredService<ClaudeAssistant>();
+            var presenter = sp.GetRequiredService<ReplyPresenter>();
+            return new AssistantWalkthroughTurns(
+                sp.GetRequiredService<ICaptureService>(),
+                sp.GetRequiredService<ISettingsStore>(),
+                sp.GetRequiredService<IAnnotationRenderer>(),
+                sp.GetRequiredService<IBuddyPresence>(),
+                sp.GetRequiredService<IAppSkills>(),
+                sp.GetRequiredService<IForegroundApp>(),
+                () => assistant.CurrentConversation(),
+                assistant.ReplyAsync,
+                () => new SpokenReplySpeech(presenter.Begin()),
+                sp.GetRequiredService<ILogger<AssistantWalkthroughTurns>>());
+        });
+        services.AddSingleton<SwitchableWalkthroughTurns>();
+        services.AddSingleton<IWalkthroughTurns>(sp => sp.GetRequiredService<SwitchableWalkthroughTurns>());
+        services.AddSingleton(sp => new WalkthroughEngine(
+            sp.GetRequiredService<IStepWatcher>(),
+            sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<IWalkthroughTurns>(),
+            sp.GetRequiredService<IBuddyPresence>(),
+            sp.GetRequiredService<IForegroundApp>(),
+            DisplayMonitors.GetAll,
+            sp.GetRequiredService<ILogger<WalkthroughEngine>>()));
+        services.AddSingleton<IWalkthroughs>(sp => sp.GetRequiredService<WalkthroughEngine>());
+        services.AddSingleton<WalkthroughDemo>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();
@@ -172,6 +242,10 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
+        services.AddTransient<UpdatesSettingsView>();
+        services.AddSingleton<Func<UpdatesSettingsView>>(sp => sp.GetRequiredService<UpdatesSettingsView>);
+        services.AddTransient<BugReportWindow>();
+        services.AddSingleton<Func<BugReportWindow>>(sp => sp.GetRequiredService<BugReportWindow>);
         services.AddTransient<ConnectorsSettingsView>();
         services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
         services.AddTransient<DictationSettingsView>();
@@ -191,9 +265,11 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<UpdateStartup>();
         services.AddHostedService<ConnectorStartup>();
         services.AddHostedService<DictationCoordinator>();
         services.AddHostedService<ClickyStartup>();
+        services.AddHostedService<WalkthroughStartup>();
 
         return services;
     }

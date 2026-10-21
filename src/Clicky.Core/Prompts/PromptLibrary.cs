@@ -44,10 +44,19 @@ public static class PromptLibrary
             }
 
             text.Append("]\n");
+            if (shot.Ink is { } ink)
+            {
+                text.Append(ink.Describe()).Append('\n');
+            }
         }
         else
         {
             text.Append("[No screenshot with this message.]\n");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Context))
+        {
+            text.Append(request.Context.Trim()).Append('\n');
         }
 
         text.Append(request.Source switch

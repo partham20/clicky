@@ -37,6 +37,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="H.NotifyIcon.Wpf" />
     <PackageReference Include="Microsoft.Web.WebView2" />
+    <PackageReference Include="Velopack" />
   </ItemGroup>
 
 </Project>

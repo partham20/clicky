@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading.Channels;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Microsoft.Extensions.Logging;
 
 namespace Clicky.Core.Voice;
@@ -259,7 +260,7 @@ public sealed class VoiceOutput : IDisposable
 }
 
 /// <summary>One reply: text in, speech (or a quiet decision) out.</summary>
-public sealed class SpokenReply : IDisposable
+public sealed class SpokenReply : ITalkReply, IDisposable
 {
     private readonly VoiceOutput _owner;
     private readonly SpeechSettings _settings;

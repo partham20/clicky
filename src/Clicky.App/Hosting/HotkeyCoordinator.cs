@@ -3,7 +3,10 @@ using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Ink;
+using Clicky.Core.Assistant;
 using Clicky.Core.Settings;
+using Clicky.Core.Talk;
 using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Input;
 using Microsoft.Extensions.Hosting;
@@ -13,10 +16,11 @@ namespace Clicky.App.Hosting;
 
 /// <summary>
 /// What each hotkey does. Talk opens the mic the moment its keys go down (Pending), which also
-/// stops Clicky if it is speaking (barge-in); it shows the buddy listening and takes a screenshot
-/// once it arms, and on release turns the speech into text. Until M6 sends that to Claude, Clicky
-/// says back what it heard. OpenHome opens Home. The rest are logged until their milestones (text
-/// mode M10). Dictation is DictationCoordinator's.
+/// stops Clicky if it is speaking or still answering (barge-in), clears its marks and gets Claude
+/// ready; it shows the buddy listening and takes a screenshot once it arms, and on release turns
+/// the speech into text and asks Claude with the screenshot (<see cref="TalkAnswerer"/>). OpenHome
+/// opens Home. The rest are logged until their milestones (text mode M10). Dictation is
+/// DictationCoordinator's.
 /// </summary>
 /// <remarks>Events arrive on the hotkey pump thread, one at a time; nothing here blocks it or the UI thread.</remarks>
 internal sealed class HotkeyCoordinator(
@@ -24,7 +28,9 @@ internal sealed class HotkeyCoordinator(
     ICaptureService capture,
     VoiceInput voice,
     VoiceOutput speech,
-    ReplyPresenter replies,
+    TalkLoop talkLoop,
+    IInkTrailService ink,
+    TalkAnswerer answerer,
     IBuddyPresence presence,
     ISettingsStore settings,
     IAppShell shell,
@@ -32,12 +38,19 @@ internal sealed class HotkeyCoordinator(
     Dispatcher dispatcher,
     ILogger<HotkeyCoordinator> logger) : IHostedService, IDisposable
 {
-    private static readonly TimeSpan ProblemCaptionTime = TimeSpan.FromSeconds(8);
+    /// <summary>
+    /// How long a transcript waits for its screenshot (normally ready ~150 ms after Talk arms, long
+    /// before speech is text) before asking without one.
+    /// </summary>
+    private static readonly TimeSpan CaptureWait = TimeSpan.FromSeconds(3);
 
     private readonly CancellationTokenSource _stopping = new();
 
     // Hotkey thread only.
     private VoiceSession? _talk;
+    private Task<CaptureResult?> _capture = Task.FromResult<CaptureResult?>(null);
+    private PixelPoint? _cursor;
+    private IInkRecording? _inkRecording;
 
     // Also read on the capture thread (level) and by completions on the thread pool.
     private volatile bool _talkArmed;
@@ -45,10 +58,8 @@ internal sealed class HotkeyCoordinator(
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // The capture path warms up in StartupWarmUp, one GPU user at a time.
         hotkeys.Triggered += OnHotkey;
-
-        // Device creation and codec loading cost ~1 s once; pay it now rather than on the first Talk.
-        _ = Task.Run(() => capture.WarmUpAsync(_stopping.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 
@@ -57,6 +68,8 @@ internal sealed class HotkeyCoordinator(
         hotkeys.Triggered -= OnHotkey;
         await _stopping.CancelAsync();
         _talk?.Cancel();
+        _inkRecording?.Cancel();
+        talkLoop.Cancel();
     }
 
     public void Dispose() => _stopping.Dispose();
@@ -71,6 +84,8 @@ internal sealed class HotkeyCoordinator(
                     logger.LogInformation("Talk: barge-in, stopped speaking");
                 }
 
+                // Also stops an answer still streaming, clears the marks and starts Claude warming up.
+                talkLoop.Begin();
                 StartListening();
                 break;
 
@@ -85,13 +100,19 @@ internal sealed class HotkeyCoordinator(
                 speech.Prepare();
 
                 // The pointer where the user was looking when they pressed, not where it is when the capture runs.
-                PixelPoint? cursor = CursorReader.TryGet(out var position, out _) ? position : null;
-                _ = CaptureForTalkAsync(new CaptureTarget(settings.Current.Capture.Mode, cursor));
+                _cursor = CursorReader.TryGet(out var position, out _) ? position : null;
+                _capture = CaptureForTalkAsync(new CaptureTarget(settings.Current.Capture.Mode, _cursor));
+
+                // M9: what the pointer does while the user talks ("this one", circling) goes with the question.
+                _inkRecording?.Cancel();
+                _inkRecording = ink.Start();
                 break;
 
             case (HotkeyAction.Talk, HotkeyPhase.Cancelled):
                 _talk?.Cancel();
                 _talk = null;
+                _inkRecording?.Cancel();
+                _inkRecording = null;
                 if (_talkArmed)
                 {
                     _talkArmed = false;
@@ -104,6 +125,8 @@ internal sealed class HotkeyCoordinator(
             case (HotkeyAction.Talk, HotkeyPhase.Ended):
                 var session = _talk;
                 _talk = null;
+                var trail = _inkRecording?.Finish();
+                _inkRecording = null;
                 _talkArmed = false;
                 presence.SetLevel(0);
                 if (session is null)
@@ -113,7 +136,7 @@ internal sealed class HotkeyCoordinator(
                 }
 
                 presence.SetState(BuddyState.Thinking);
-                _ = FinishTalkAsync(session, Volatile.Read(ref _talkGeneration));
+                _ = FinishTalkAsync(session, Volatile.Read(ref _talkGeneration), _capture, _cursor, trail);
                 break;
 
             case (HotkeyAction.OpenHome, HotkeyPhase.Fired):
@@ -152,7 +175,7 @@ internal sealed class HotkeyCoordinator(
         _talk = session;
     }
 
-    private async Task FinishTalkAsync(VoiceSession session, int generation)
+    private async Task FinishTalkAsync(VoiceSession session, int generation, Task<CaptureResult?> screenshot, PixelPoint? cursor, InkTrail? trail)
     {
         VoiceResult result;
         try
@@ -177,14 +200,19 @@ internal sealed class HotkeyCoordinator(
         switch (result.Outcome)
         {
             case VoiceOutcome.Transcribed:
-                // M6 sends this, with the screenshot, to Claude. Until then Clicky says back what it heard.
-                replies.Speak($"You said: {result.Text}");
+                var shot = await WaitForCaptureAsync(screenshot).ConfigureAwait(false);
+                if (generation != Volatile.Read(ref _talkGeneration) || _talkArmed)
+                {
+                    return;
+                }
+
+                await answerer.AskAsync(new TalkQuestion(result.Text, RequestSource.Voice, shot, cursor, trail), _stopping.Token).ConfigureAwait(false);
                 break;
 
             case VoiceOutcome.Failed:
                 presence.SetState(BuddyState.Idle);
                 var problem = result.Problem ?? "Something went wrong with speech input.";
-                ShowCaption(problem, ProblemCaptionTime);
+                answerer.ShowCaption(problem, TalkAnswerer.ProblemCaptionTime);
                 notifier.Notify(result.MicrophoneProblem is null ? "Clicky couldn't transcribe that" : "Clicky can't hear you", problem, warning: true);
                 break;
 
@@ -194,30 +222,25 @@ internal sealed class HotkeyCoordinator(
         }
     }
 
-    private void ShowCaption(string text, TimeSpan duration)
-    {
-        presence.SetCaption(text);
-        _ = ClearCaptionAsync(presence.Caption, duration);
-    }
-
-    private async Task ClearCaptionAsync(string? caption, TimeSpan delay)
+    private async Task<CaptureResult?> WaitForCaptureAsync(Task<CaptureResult?> screenshot)
     {
         try
         {
-            await Task.Delay(delay, _stopping.Token).ConfigureAwait(false);
+            return await screenshot.WaitAsync(CaptureWait, _stopping.Token).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            logger.LogWarning("Talk capture took over {Seconds} s; asking without a screenshot", CaptureWait.TotalSeconds);
+            return null;
         }
         catch (OperationCanceledException)
         {
-            return;
-        }
-
-        if (caption is not null && string.Equals(presence.Caption, caption, StringComparison.Ordinal))
-        {
-            presence.SetCaption(null);
+            return null;
         }
     }
 
-    private async Task CaptureForTalkAsync(CaptureTarget target)
+    /// <summary>Never throws: without a screenshot, Talk still answers what it can.</summary>
+    private async Task<CaptureResult?> CaptureForTalkAsync(CaptureTarget target)
     {
         try
         {
@@ -246,13 +269,17 @@ internal sealed class HotkeyCoordinator(
             {
                 logger.LogInformation("Talk capture {Width}x{Height} from {Source} in {Ms:0} ms", geometry.ImageWidth, geometry.ImageHeight, source, result.Elapsed.TotalMilliseconds);
             }
+
+            return result;
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
+            return null;
         }
-        catch (CaptureException ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            logger.LogWarning(ex, "Talk capture failed");
+            logger.LogWarning(ex, "Talk capture failed; asking without a screenshot");
+            return null;
         }
     }
 }

@@ -1,0 +1,56 @@
+name: Installer
+
+# Packs two versions with vpk and runs build/smoke-test.ps1: silent install, background update
+# from a local feed, apply on restart, silent uninstall. Nothing is published.
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'build/**'
+      - 'Directory.*.props'
+      - 'global.json'
+      - 'dotnet-tools.json'
+      - '.github/workflows/installer.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build/**'
+      - 'Directory.*.props'
+      - 'global.json'
+      - 'dotnet-tools.json'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install, update, uninstall
+        shell: pwsh
+        run: ./build/smoke-test.ps1
+
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          $out = New-Item -ItemType Directory -Force artifacts/smoke-logs
+          Copy-Item artifacts/smoke/data/logs/* $out -ErrorAction SilentlyContinue
+          Copy-Item artifacts/smoke/data/settings.json $out -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\velopack\*.log" $out -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\ClickyApp\*.log" $out -ErrorAction SilentlyContinue
+          Get-ChildItem $out | Format-Table Name, Length -AutoSize
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-smoke-logs
+          path: artifacts/smoke-logs
+          if-no-files-found: ignore

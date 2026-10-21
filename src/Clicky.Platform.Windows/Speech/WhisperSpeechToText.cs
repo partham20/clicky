@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
+using Clicky.Platform.Windows.Display;
 using Microsoft.Extensions.Logging;
 using Whisper.net;
 using Whisper.net.LibraryLoader;
@@ -232,6 +233,9 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
             if (!s_runtimeChosen)
             {
                 s_runtimeChosen = true;
+
+                // Loading the Vulkan runtime starts the GPU driver; never alongside the capture device (see GpuInitGate).
+                using var gpu = GpuInitGate.Enter();
                 RuntimeOptions.RuntimeLibraryOrder = useGpu ? [RuntimeLibrary.Vulkan, RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx] : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
                 LogProvider.AddLogger(OnWhisperLog);
 
@@ -279,7 +283,12 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
             var path = await DownloadAsync(model, cancellationToken).ConfigureAwait(false);
 
             var stopwatch = Stopwatch.StartNew();
-            var factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = onGpu, GpuDevice = s_gpuDevice, UseFlashAttention = onGpu });
+            WhisperFactory factory;
+            using (GpuInitGate.Enter())
+            {
+                factory = WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = onGpu, GpuDevice = s_gpuDevice, UseFlashAttention = onGpu });
+            }
+
 
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try

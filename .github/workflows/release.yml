@@ -1,0 +1,76 @@
+name: Release
+
+# Builds the Velopack installer and publishes it as a GitHub release, which installed copies pick
+# up as an update. Push a tag (git tag v0.2.0 && git push origin v0.2.0) or run it by hand.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without the v, e.g. 0.2.0'
+        required: true
+      prerelease:
+        description: 'Mark as a pre-release (installed copies skip it unless updates.prerelease is on)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'push') { '${{ github.ref_name }}'.TrimStart('v') } else { '${{ inputs.version }}' }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Not a semantic version: $version" }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - run: dotnet tool restore
+
+      - name: Test
+        run: dotnet test Clicky.sln -c Release
+
+      # Earlier releases in the output folder let vpk build a small delta package.
+      - name: Download previous release
+        shell: pwsh
+        run: dotnet vpk download github --repoUrl "https://github.com/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" --outputDir artifacts/releases
+        continue-on-error: true
+
+      - name: Pack
+        shell: pwsh
+        run: ./build/pack.ps1 -Version $env:VERSION -OutputDir artifacts/releases
+
+      - name: Publish GitHub release
+        shell: pwsh
+        run: |
+          $pre = if ('${{ inputs.prerelease }}' -eq 'true' -or $env:VERSION -match '-') { '--pre' } else { $null }
+          dotnet vpk upload github `
+            --repoUrl "https://github.com/${{ github.repository }}" `
+            --token "${{ secrets.GITHUB_TOKEN }}" `
+            --outputDir artifacts/releases `
+            --tag "v$env:VERSION" `
+            --releaseName "Clicky $env:VERSION" `
+            --publish `
+            $pre
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clicky-${{ env.VERSION }}
+          path: |
+            artifacts/releases/*Setup.exe
+            artifacts/releases/*.nupkg
+            artifacts/releases/releases.win.json
