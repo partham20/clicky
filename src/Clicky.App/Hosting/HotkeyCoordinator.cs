@@ -16,7 +16,7 @@ namespace Clicky.App.Hosting;
 /// stops Clicky if it is speaking (barge-in); it shows the buddy listening and takes a screenshot
 /// once it arms, and on release turns the speech into text. Until M6 sends that to Claude, Clicky
 /// says back what it heard. OpenHome opens Home. The rest are logged until their milestones (text
-/// mode M10, dictation M12).
+/// mode M10). Dictation is DictationCoordinator's.
 /// </summary>
 /// <remarks>Events arrive on the hotkey pump thread, one at a time; nothing here blocks it or the UI thread.</remarks>
 internal sealed class HotkeyCoordinator(
@@ -118,6 +118,10 @@ internal sealed class HotkeyCoordinator(
 
             case (HotkeyAction.OpenHome, HotkeyPhase.Fired):
                 dispatcher.InvokeAsync(shell.ShowHome);
+                break;
+
+            case (HotkeyAction.Dictation or HotkeyAction.DictationHandsFree, _):
+                // DictationCoordinator.
                 break;
 
             case (_, HotkeyPhase.Pending or HotkeyPhase.Cancelled):

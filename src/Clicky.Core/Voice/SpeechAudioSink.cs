@@ -35,6 +35,8 @@ public sealed class SpeechAudioSink
     private readonly SampleBuffer _speech;
     private readonly int _maxSamples;
     private readonly int _levelBlock;
+    private readonly Action<ReadOnlySpan<float>>? _stream;
+    private long _total;
 
     private float[] _mono = new float[4800];
     private double _levelSquares;
@@ -53,6 +55,18 @@ public sealed class SpeechAudioSink
         _levelBlock = Math.Max(1, (int)(format.SampleRate * LevelInterval.TotalSeconds));
     }
 
+    /// <summary>
+    /// Streaming mode, for recordings too long to keep (dictation): every run of 16 kHz speech goes
+    /// to <paramref name="stream"/> on the capture thread as it is produced, and nothing is kept, so
+    /// <see cref="Complete"/> returns an empty array after handing over the resampler's tail.
+    /// </summary>
+    public SpeechAudioSink(PcmFormat format, TimeSpan maxDuration, Action<ReadOnlySpan<float>> stream)
+        : this(format, maxDuration)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        _stream = stream;
+    }
+
     /// <summary>Raised on the capture thread every <see cref="LevelInterval"/> of audio.</summary>
     public event Action<float>? LevelChanged;
 
@@ -64,14 +78,14 @@ public sealed class SpeechAudioSink
     /// <summary>True once the recording hit its maximum length; later audio was dropped.</summary>
     public bool Truncated { get; private set; }
 
-    /// <summary>Speech samples kept so far (16 kHz).</summary>
+    /// <summary>Speech samples kept so far (16 kHz); in streaming mode, produced so far.</summary>
     public int SampleCount
     {
         get
         {
             lock (_gate)
             {
-                return _speech.Count;
+                return (int)Math.Min(int.MaxValue, _stream is null ? _speech.Count : _total);
             }
         }
     }
@@ -101,7 +115,11 @@ public sealed class SpeechAudioSink
             levels = MeasureLevels(mono);
 
             _resampler.Process(mono, _speech);
-            if (_speech.Count >= _maxSamples)
+            if (_stream is not null)
+            {
+                Hand();
+            }
+            else if (_speech.Count >= _maxSamples)
             {
                 Truncated = true;
             }
@@ -127,12 +145,35 @@ public sealed class SpeechAudioSink
                 if (!Truncated)
                 {
                     _resampler.Flush(_speech);
+                    if (_stream is not null)
+                    {
+                        Hand();
+                    }
                 }
             }
 
             var count = Math.Min(_speech.Count, _maxSamples);
             return _speech.Span[..count].ToArray();
         }
+    }
+
+    // Streaming mode, under the lock: pass on what the resampler produced, up to the length limit.
+    private void Hand()
+    {
+        var room = (int)Math.Max(0, _maxSamples - _total);
+        var span = _speech.Span[..Math.Min(room, _speech.Count)];
+        _total += span.Length;
+        if (_total >= _maxSamples)
+        {
+            Truncated = true;
+        }
+
+        if (span.Length > 0)
+        {
+            _stream!(span);
+        }
+
+        _speech.Clear();
     }
 
     /// <summary>Maps an RMS level in dBFS onto the 0..1 scale <see cref="Level"/> uses.</summary>

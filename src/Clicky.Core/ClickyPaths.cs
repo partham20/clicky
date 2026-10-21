@@ -32,6 +32,12 @@ public sealed class ClickyPaths
 
     public string MemoryDirectory => Path.Combine(Root, "memory");
 
+    /// <summary>Words dictation should know (see settings.dictation); Clicky adds the ones it learns.</summary>
+    public string DictionaryFile => Path.Combine(Root, "dictionary.json");
+
+    /// <summary>Text of every dictation, one file per day, kept for settings.dictation.keepHistoryDays.</summary>
+    public string DictationHistoryDirectory => Path.Combine(Root, "dictation");
+
     /// <summary>Only written when settings.debug.saveCaptures is on.</summary>
     public string DebugCapturesDirectory => Path.Combine(Root, "debug", "captures");
 

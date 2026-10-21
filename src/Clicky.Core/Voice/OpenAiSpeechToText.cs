@@ -26,7 +26,10 @@ public sealed class OpenAiSpeechToText(HttpClient http, ISecretStore secrets, IS
 
     public string Description => $"OpenAI {settings.Current.Voice.CloudModel}";
 
-    public async Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, CancellationToken cancellationToken = default)
+    public Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, CancellationToken cancellationToken = default) =>
+        TranscribeAsync(samples, language, prompt: null, cancellationToken);
+
+    public async Task<Transcript> TranscribeAsync(ReadOnlyMemory<float> samples, string language, string? prompt, CancellationToken cancellationToken = default)
     {
         var key = ApiKey() ?? throw new SpeechToTextException(
             "Cloud speech-to-text needs an OpenAI API key. Add one in Settings, or switch voice.engine back to Local.");
@@ -41,6 +44,11 @@ public sealed class OpenAiSpeechToText(HttpClient http, ISecretStore secrets, IS
         if (!string.IsNullOrWhiteSpace(language) && !string.Equals(language, VoiceSettings.AutoLanguage, StringComparison.OrdinalIgnoreCase))
         {
             content.Add(new StringContent(language), "language");
+        }
+
+        if (!string.IsNullOrWhiteSpace(prompt))
+        {
+            content.Add(new StringContent(prompt), "prompt");
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, Endpoint) { Content = content };

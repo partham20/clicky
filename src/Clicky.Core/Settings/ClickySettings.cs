@@ -39,6 +39,8 @@ public sealed record ClickySettings
 
     public ConnectorSettings Connectors { get; init; } = new();
 
+    public DictationSettings Dictation { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -57,6 +59,7 @@ public sealed record ClickySettings
         Claude = (Claude ?? new()).Normalize(),
         Memory = (Memory ?? new()).Normalize(),
         Connectors = (Connectors ?? new()).Normalize(),
+        Dictation = (Dictation ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }
