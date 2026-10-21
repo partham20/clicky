@@ -47,6 +47,10 @@ public sealed class VoiceOutput : IDisposable
     private readonly Lock _gate = new();
     private SpokenReply? _current;
 
+    // A speaker opened ahead of a reply (see Prepare), and which device setting it was opened for.
+    private Task<ISpeakerSession>? _warm;
+    private string? _warmDevice;
+
     public VoiceOutput(
         ISpeaker speaker,
         Func<VoiceOutputEngine, ITextToSpeech> engines,
@@ -74,6 +78,9 @@ public sealed class VoiceOutput : IDisposable
     internal ILogger Logger { get; }
 
     internal TimeProvider Time { get; }
+
+    /// <summary>How long a speaker opened by <see cref="Prepare"/> waits for a reply before it is closed.</summary>
+    internal TimeSpan WarmLifetime { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>True while a reply is being spoken.</summary>
     public bool IsSpeaking
@@ -135,11 +142,114 @@ public sealed class VoiceOutput : IDisposable
         return current?.Interrupt() == true;
     }
 
+    /// <summary>
+    /// A reply is coming soon (the user just asked something): open the speaker now. Opening a
+    /// WASAPI stream costs 250 ms to 1 s on common laptop drivers, which would otherwise come
+    /// straight out of the time to first sound. The next reply within <see cref="WarmLifetime"/>
+    /// uses it; after that it is closed. Returns at once; never throws.
+    /// </summary>
+    public void Prepare()
+    {
+        var settings = Settings.Current.Speech;
+        if (settings.QuietMode)
+        {
+            return;
+        }
+
+        Task<ISpeakerSession> warm;
+        lock (_gate)
+        {
+            if (_warm is not null)
+            {
+                return;
+            }
+
+            warm = Task.Run(() => Speaker.OpenAsync(settings.OutputDevice, (float)settings.Volume), CancellationToken.None);
+            _warm = warm;
+            _warmDevice = settings.OutputDevice;
+        }
+
+        _ = ExpireAsync(warm);
+    }
+
     /// <summary>Gets the configured voice ready. Never throws.</summary>
     public Task WarmUpAsync(CancellationToken cancellationToken = default) =>
         Engines(Settings.Current.Speech.Engine).WarmUpAsync(cancellationToken);
 
-    public void Dispose() => Interrupt();
+    public void Dispose()
+    {
+        Interrupt();
+        Task<ISpeakerSession>? warm;
+        lock (_gate)
+        {
+            warm = _warm;
+            _warm = null;
+        }
+
+        if (warm is not null)
+        {
+            _ = CloseAsync(warm);
+        }
+    }
+
+    /// <summary>The speaker for a reply: the prepared one if it suits, else a fresh one.</summary>
+    internal async Task<ISpeakerSession> OpenSpeakerAsync(SpeechSettings settings, CancellationToken cancellationToken)
+    {
+        Task<ISpeakerSession>? warm = null;
+        lock (_gate)
+        {
+            if (_warm is not null && string.Equals(_warmDevice, settings.OutputDevice, StringComparison.Ordinal))
+            {
+                warm = _warm;
+                _warm = null;
+            }
+        }
+
+        if (warm is not null)
+        {
+            try
+            {
+                var session = await warm.ConfigureAwait(false);
+                session.Buffer.Gain = (float)settings.Volume;
+                return session;
+            }
+            catch (SpeakerException ex)
+            {
+                Logger.LogDebug(ex, "Speech: the prepared speaker failed to open; trying again");
+            }
+        }
+
+        return await Speaker.OpenAsync(settings.OutputDevice, (float)settings.Volume, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task CloseAsync(Task<ISpeakerSession> warm)
+    {
+        try
+        {
+            var session = await warm.ConfigureAwait(false);
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is SpeakerException or OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task ExpireAsync(Task<ISpeakerSession> warm)
+    {
+        await Task.Delay(WarmLifetime, Time).ConfigureAwait(false);
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_warm, warm))
+            {
+                return;
+            }
+
+            _warm = null;
+        }
+
+        Logger.LogDebug("Speech: closing the prepared speaker, no reply came");
+        await CloseAsync(warm).ConfigureAwait(false);
+    }
 }
 
 /// <summary>One reply: text in, speech (or a quiet decision) out.</summary>
@@ -307,8 +417,8 @@ public sealed class SpokenReply : IDisposable
         var engine = _owner.Engines(_settings.Engine);
         var request = new SpeechRequest(_settings.Engine == VoiceOutputEngine.Cloud ? _settings.CloudVoice : _settings.WindowsVoice, _settings.Rate);
 
-        // Open the device while the first sentence is still being written and synthesized.
-        var opening = Task.Run(() => _owner.Speaker.OpenAsync(_settings.OutputDevice, (float)_settings.Volume, token), CancellationToken.None);
+        // Open the device (unless Prepare already did) while the first sentence is still being written and synthesized.
+        var opening = Task.Run(() => _owner.OpenSpeakerAsync(_settings, token), CancellationToken.None);
         // Look-ahead: one sentence playing, one queued behind it, one ready and one being synthesized.
         // Enough to keep the voice going, little enough that barge-in wastes almost nothing.
         var clips = Channel.CreateBounded<(string Text, SpeechClip Clip)>(new BoundedChannelOptions(1) { SingleReader = true, SingleWriter = true });

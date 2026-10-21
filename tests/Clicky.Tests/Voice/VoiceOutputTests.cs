@@ -221,6 +221,35 @@ public sealed class VoiceOutputTests
         Assert.Empty(_tts.Texts);
     }
 
+    [Fact]
+    public async Task A_prepared_speaker_is_used_by_the_next_reply()
+    {
+        using var output = Output();
+
+        output.Prepare();
+        output.Prepare();
+        await WaitUntil(() => _speaker.Opened == 1);
+        var prepared = _speaker.Last;
+        var result = await output.Speak("Hi.").Completion.WaitAsync(Timeout);
+
+        Assert.Equal(ReplyOutcome.Spoken, result.Outcome);
+        Assert.Equal(1, _speaker.Opened);
+        Assert.Same(prepared, _speaker.Last);
+    }
+
+    [Fact]
+    public async Task A_prepared_speaker_nobody_uses_is_closed()
+    {
+        using var output = Output();
+        output.WarmLifetime = TimeSpan.FromMilliseconds(30);
+
+        output.Prepare();
+        await WaitUntil(() => _speaker.Last is { Disposed: true });
+
+        await output.Speak("Hi.").Completion.WaitAsync(Timeout);
+        Assert.Equal(2, _speaker.Opened);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + Timeout;
@@ -285,6 +314,8 @@ public sealed class VoiceOutputTests
 
         public FakeSession? Last { get; private set; }
 
+        public int Opened { get; private set; }
+
         public Task<ISpeakerSession> OpenAsync(string deviceId, float gain, CancellationToken cancellationToken = default)
         {
             if (OpenError is not null)
@@ -294,6 +325,7 @@ public sealed class VoiceOutputTests
 
             var session = new FakeSession(gain);
             Last = session;
+            Opened++;
             return Task.FromResult<ISpeakerSession>(session);
         }
     }
