@@ -36,6 +36,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
 - `claude`: `backend` (`Api` or `Subscription`), `routing` (`Auto`, `AlwaysFast`, `AlwaysDeep`), `apiFastModel` (`claude-haiku-5-5`), `apiDeepModel` (`claude-opus-5-5`), `subscriptionFastModel` (`haiku`), `subscriptionDeepModel` (`opus`), `fastEffort` (`Low`), `deepEffort` (`Medium`), `maxTurns` (40), `idleResetMinutes` (10), `cliPath` (empty finds `claude.exe`). Also in Settings › Claude. The Anthropic key is in Credential Manager as `Clicky/anthropic-api-key` (or `ANTHROPIC_API_KEY` for development).
+- `skills\*.md` (and `skills\<name>\SKILL.md`): app guides sent with questions asked while that app is in front (see Walkthroughs below). The folder gets a README with the format on first run.
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
@@ -139,6 +140,18 @@ While Talk is held the user can circle, underline or rest the pointer on things.
 - Gesture reading and the painter are pure code in `Clicky.Core/Ink` (`InkAnalyzer`, `InkPainter`), in screenshot pixels: loops are found where the path crosses itself (circling twice is one circle), straight unhurried sweeps or back-and-forth along a line are underlines, rests of 400 ms or more are pauses, quick straight flicks are moves, the rest are paths. Ink off the screenshot is dropped.
 - `settings.ink`: `enabled`, `showTrail`, `drawOnScreenshot` (all on by default). With `debug.saveCaptures` on, the inked screenshot is saved next to the debug captures.
 - Tray › Ink trail test (preview) runs the same steps for 5 s without the voice and shows what Claude would be told.
+
+## Walkthroughs and app skills (M8)
+
+When you ask how to do something, Claude answers one step at a time (a `step` action: number, estimated total, instruction, and where to act). `IWalkthroughs` (Clicky.Core/Walkthroughs) takes it from there: it draws the step, waits for you to do it, lets the app react, takes a new screenshot and asks Claude for the next step itself (a `[Walkthrough]` request on the deep model), up to 15 steps, until Claude says done.
+
+- Done is a click within about 24 DIP of the spot (wider when the screenshot was downscaled), a click anywhere on the element there, or that element getting keyboard focus, being pressed or selected (so Tab + Space works too). Steps without a spot (press a key, type something) move on with Done on the card.
+- Three clicks elsewhere, pressing some other button, or switching to another app (not Start or search) counts as going another way: Clicky takes a new look and Claude either moves on or helps you back, at most twice per step.
+- The step card at the bottom of the screen shows the step and has Back, Skip, Done and Stop; it never takes focus and stays out of screenshots. Asking something mid-walkthrough pauses it; it carries on after the answer. A walkthrough with no progress for 15 minutes ends.
+- The mouse hook (`WH_MOUSE_LL`, on a thread of its own that only queues button events) and the accessibility hooks (WinEvents + MSAA bounds, on a second thread) exist only while a walkthrough runs. A non-elevated Clicky can't see clicks in an elevated window (UIPI); Done on the card still works.
+- The talk loop passes every reply event to `IWalkthroughs.Observe(event, capture.Geometry)` and leaves step actions to it; `IWalkthroughTurns` runs the engine's own requests (`AssistantWalkthroughTurns` by default).
+- App skills: Markdown files in `%AppData%\Clicky\skills` with a front-matter header (`name`, `apps` = process names, `titles` = window-title fragments, `description`). The guides for the app in front go in `ClaudeRequest.Context` (`IAppSkills.ContextFor`), at most 3 per request and about 12,000 characters each, once per conversation and again after the file changes. Edits apply on the next question.
+- Tray › Walkthrough demo (preview) runs a scripted four-step walkthrough of a practice window: mouse, keyboard, off-track, Back, Skip and Done, with no Claude involved.
 
 ## Memory (M11)
 
