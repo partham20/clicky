@@ -42,6 +42,12 @@ public sealed class ClickyPaths
     public string ModelsDirectory => Path.Combine(LocalRoot, "models");
 
     /// <summary>
+    /// Working folder for Claude Code (subscription backend): an empty folder, so it finds no
+    /// project files, plus the system prompt it is given.
+    /// </summary>
+    public string ClaudeCodeDirectory => Path.Combine(LocalRoot, "claude-code");
+
+    /// <summary>
     /// %AppData%\Clicky (roaming) plus %LocalAppData%\Clicky for models. CLICKY_DATA_DIR overrides
     /// both for dev/test.
     /// </summary>

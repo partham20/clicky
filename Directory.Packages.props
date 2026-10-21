@@ -3,6 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="Anthropic" Version="12.60.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
     <PackageVersion Include="Serilog.Extensions.Hosting" Version="10.0.0" />

@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/partham20/clicky/schema/actions/v1",
+  "title": "Clicky action",
+  "description": "One thing Clicky says, shows or does. Shared by every backend (and by the Linux app later). Coordinates are pixels in the screenshot the model was sent: origin top-left, x right, y down.",
+  "version": 1,
+  "oneOf": [
+    { "$ref": "#/$defs/say" },
+    { "$ref": "#/$defs/point" },
+    { "$ref": "#/$defs/highlight" },
+    { "$ref": "#/$defs/draw" },
+    { "$ref": "#/$defs/step" },
+    { "$ref": "#/$defs/click" },
+    { "$ref": "#/$defs/type" },
+    { "$ref": "#/$defs/key" },
+    { "$ref": "#/$defs/scroll" },
+    { "$ref": "#/$defs/wait" },
+    { "$ref": "#/$defs/ask_permission" },
+    { "$ref": "#/$defs/done" }
+  ],
+  "$defs": {
+    "say": {
+      "type": "object",
+      "description": "Speak to the user. Plain conversational sentences; no markdown.",
+      "properties": {
+        "type": { "const": "say" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 }
+      },
+      "required": ["type", "text"],
+      "additionalProperties": false
+    },
+    "point": {
+      "type": "object",
+      "description": "Fly the buddy to a spot on the screenshot and point at it, e.g. a button you are talking about. Use this instead of describing where something is.",
+      "properties": {
+        "type": { "const": "point" },
+        "x": { "type": "number", "minimum": 0, "description": "Screenshot pixel, from the left." },
+        "y": { "type": "number", "minimum": 0, "description": "Screenshot pixel, from the top." },
+        "label": { "type": "string", "maxLength": 80, "description": "Short caption shown by the pointer, e.g. \"Share\"." }
+      },
+      "required": ["type", "x", "y"],
+      "additionalProperties": false
+    },
+    "highlight": {
+      "type": "object",
+      "description": "Draw a glowing box around an area of the screenshot, e.g. a panel or a group of controls.",
+      "properties": {
+        "type": { "const": "highlight" },
+        "x": { "type": "number", "minimum": 0, "description": "Left edge, screenshot pixels." },
+        "y": { "type": "number", "minimum": 0, "description": "Top edge, screenshot pixels." },
+        "width": { "type": "number", "minimum": 1 },
+        "height": { "type": "number", "minimum": 1 },
+        "label": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["type", "x", "y", "width", "height"],
+      "additionalProperties": false
+    },
+    "draw": {
+      "type": "object",
+      "description": "Draw on the screen to explain something. arrow: points are [from, to]. circle: points are [centre] and radius is required. underline: points are [start, end]. freehand: 2 to 64 points.",
+      "properties": {
+        "type": { "const": "draw" },
+        "shape": { "type": "string", "enum": ["arrow", "circle", "underline", "freehand"] },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "properties": {
+              "x": { "type": "number", "minimum": 0 },
+              "y": { "type": "number", "minimum": 0 }
+            },
+            "required": ["x", "y"],
+            "additionalProperties": false
+          }
+        },
+        "radius": { "type": "number", "minimum": 1 },
+        "color": { "type": "string", "enum": ["accent", "red", "green", "yellow", "blue"] },
+        "label": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["type", "shape", "points"],
+      "additionalProperties": false
+    },
+    "step": {
+      "type": "object",
+      "description": "One step of a walkthrough the user wants to learn. Give one step at a time, then wait for the user. x and y mark where the user should act.",
+      "properties": {
+        "type": { "const": "step" },
+        "index": { "type": "integer", "minimum": 1 },
+        "total": { "type": "integer", "minimum": 1 },
+        "instruction": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 }
+      },
+      "required": ["type", "index", "instruction"],
+      "additionalProperties": false
+    },
+    "click": {
+      "type": "object",
+      "description": "Click on the computer for the user. Only when the user asked you to do something for them.",
+      "properties": {
+        "type": { "const": "click" },
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "button": { "type": "string", "enum": ["left", "right", "middle"] },
+        "count": { "type": "integer", "minimum": 1, "maximum": 3, "description": "2 for a double-click." },
+        "target": { "type": "string", "maxLength": 120, "description": "Name of the control, e.g. \"Save button\", so it can be found without moving the mouse." }
+      },
+      "required": ["type", "x", "y"],
+      "additionalProperties": false
+    },
+    "type": {
+      "type": "object",
+      "description": "Type text into the focused field.",
+      "properties": {
+        "type": { "const": "type" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 10000 }
+      },
+      "required": ["type", "text"],
+      "additionalProperties": false
+    },
+    "key": {
+      "type": "object",
+      "description": "Press a key or shortcut, e.g. \"Enter\", \"Ctrl+S\", \"Alt+Tab\".",
+      "properties": {
+        "type": { "const": "key" },
+        "keys": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "required": ["type", "keys"],
+      "additionalProperties": false
+    },
+    "scroll": {
+      "type": "object",
+      "description": "Scroll at a spot on the screenshot.",
+      "properties": {
+        "type": { "const": "scroll" },
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "direction": { "type": "string", "enum": ["up", "down", "left", "right"] },
+        "amount": { "type": "integer", "minimum": 1, "maximum": 20, "description": "Mouse-wheel notches." }
+      },
+      "required": ["type", "x", "y", "direction"],
+      "additionalProperties": false
+    },
+    "wait": {
+      "type": "object",
+      "description": "Wait for the screen to settle, e.g. after opening an app.",
+      "properties": {
+        "type": { "const": "wait" },
+        "ms": { "type": "integer", "minimum": 100, "maximum": 30000 }
+      },
+      "required": ["type", "ms"],
+      "additionalProperties": false
+    },
+    "ask_permission": {
+      "type": "object",
+      "description": "Ask before acting on the computer, and always before anything that sends, deletes, buys, publishes or cannot be undone. Then stop and wait for the answer.",
+      "properties": {
+        "type": { "const": "ask_permission" },
+        "action": { "type": "string", "minLength": 1, "maxLength": 200, "description": "What you are about to do, e.g. \"Send the email to Priya\"." },
+        "reason": { "type": "string", "maxLength": 300 },
+        "risk": { "type": "string", "enum": ["normal", "irreversible"] }
+      },
+      "required": ["type", "action"],
+      "additionalProperties": false
+    },
+    "done": {
+      "type": "object",
+      "description": "The task you were doing on the computer is finished (or cannot be finished).",
+      "properties": {
+        "type": { "const": "done" },
+        "summary": { "type": "string", "maxLength": 500 },
+        "success": { "type": "boolean" }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    }
+  }
+}
