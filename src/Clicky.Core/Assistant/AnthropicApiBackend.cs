@@ -175,7 +175,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
             // A cancelled reply (barge-in) still happened as far as the user is concerned: keep what was said.
             if (reply.Completed || reply.HasText)
             {
-                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now) with { Results = results.Count > 0 ? results : null }, limits);
+                conversation.Append(reply.ToTurn(userText, request.Screenshot?.Png, conversation.Now, request.Attachments) with { Results = results.Count > 0 ? results : null }, limits);
             }
         }
     }
@@ -236,12 +236,12 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         IReadOnlyList<ToolCallRecord> pending = [];
         foreach (var turn in conversation.Turns)
         {
-            messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, turn.Results), turn.Screenshot, turn.UserText));
+            messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, turn.Results), turn.Screenshot, turn.UserText, turn.Attachments));
             messages.Add(AssistantMessage(turn));
             pending = turn.ToolCalls;
         }
 
-        messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, request.Step?.Results ?? conversation.UnsentResults), request.Screenshot?.Png, userText));
+        messages.Add(UserMessage(pending, DefaultToolResults.Resolve(pending, request.Step?.Results ?? conversation.UnsentResults), request.Screenshot?.Png, userText, request.Attachments));
 
         return new MessageCreateParams
         {
@@ -277,7 +277,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     }
 
     /// <param name="results">One per pending call, in the same order (see <see cref="DefaultToolResults.Resolve"/>).</param>
-    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, IReadOnlyList<ToolOutcome> results, byte[]? png, string text)
+    private static BetaMessageParam UserMessage(IReadOnlyList<ToolCallRecord> pending, IReadOnlyList<ToolOutcome> results, byte[]? png, string text, IReadOnlyList<RequestAttachment>? attachments)
     {
         var content = new List<BetaContentBlockParam>();
         for (var i = 0; i < pending.Count; i++)
@@ -292,6 +292,19 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 // Toolset results must name their toolset or the API rejects them.
                 ToolsetName = pending[i].ToolsetName,
             });
+        }
+
+        // Documents and pictures before the screenshot and the question, like a person handing them over first.
+        foreach (var attachment in attachments ?? [])
+        {
+            content.Add(new BetaTextBlockParam { Text = PromptLibrary.AttachmentText(attachment) });
+            if (attachment is { Kind: AttachmentKind.Image, Image: { } image })
+            {
+                content.Add(new BetaImageBlockParam
+                {
+                    Source = new BetaBase64ImageSource { Data = Convert.ToBase64String(image), MediaType = ToMediaType(attachment.MediaType) },
+                });
+            }
         }
 
         if (png is not null)
@@ -420,6 +433,14 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
 
         return tools;
     }
+
+    private static MediaType ToMediaType(string? mediaType) => mediaType switch
+    {
+        "image/jpeg" => MediaType.ImageJpeg,
+        "image/gif" => MediaType.ImageGif,
+        "image/webp" => MediaType.ImageWebP,
+        _ => MediaType.ImagePng,
+    };
 
     private static Effort ToEffort(ClaudeEffort effort) => effort switch
     {
@@ -600,14 +621,15 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 [.. _calls]);
         }
 
-        public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at) => new(
+        public ConversationTurn ToTurn(string userText, byte[]? png, DateTimeOffset at, IReadOnlyList<RequestAttachment>? attachments) => new(
             userText,
             png,
             _spoken.ToString(),
             Completed ? [.. _toolCalls] : [],
             at,
             Interrupted: !Completed,
-            Thinking: Completed ? [.. _thinking] : []);
+            Thinking: Completed ? [.. _thinking] : [],
+            Attachments: attachments is { Count: > 0 } ? attachments : null);
 
         private IEnumerable<ReplyEvent> FinishTool(Block block, string name, ILogger logger)
         {

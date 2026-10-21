@@ -23,6 +23,7 @@ public sealed record ThinkingRecord(string Thinking, string? Signature, string? 
 /// <param name="ToolCalls">Tool calls (API backend only), answered at the start of the next request.</param>
 /// <param name="Interrupted">The user cut the reply off; the text is what was said up to then.</param>
 /// <param name="Thinking">Thinking blocks that came before the text (API backend only).</param>
+/// <param name="Attachments">Documents and pictures sent with the question; their content is dropped once history holds too much.</param>
 /// <param name="Results">
 /// What the previous turn's tool calls did, sent with this turn (agent steps); calls without one
 /// get <see cref="DefaultToolResults"/>.
@@ -35,6 +36,7 @@ public sealed record ConversationTurn(
     DateTimeOffset At,
     bool Interrupted = false,
     IReadOnlyList<ThinkingRecord>? Thinking = null,
+    IReadOnlyList<RequestAttachment>? Attachments = null,
     IReadOnlyList<ToolOutcome>? Results = null);
 
 /// <summary>How much history is sent back.</summary>
@@ -45,7 +47,11 @@ public sealed record ConversationTurn(
 /// </param>
 /// <param name="MaxScreenshots">Screenshots kept before old ones are dropped (each costs about 1,600 tokens).</param>
 /// <param name="ScreenshotsAfterDrop">Screenshots kept (the newest) when old ones are dropped.</param>
-public sealed record HistoryLimits(int MaxTurns = 40, int TrimSlack = 10, int MaxScreenshots = 6, int ScreenshotsAfterDrop = 2);
+/// <param name="MaxAttachmentTokens">
+/// Documents and pictures kept in history, in estimated tokens. Past it the oldest lose their
+/// content (the model still sees their names); the newest turn's are always kept.
+/// </param>
+public sealed record HistoryLimits(int MaxTurns = 40, int TrimSlack = 10, int MaxScreenshots = 6, int ScreenshotsAfterDrop = 2, int MaxAttachmentTokens = 120_000);
 
 /// <summary>
 /// The running conversation the next question is asked in. History only ever changes by appending,
@@ -195,6 +201,8 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
                 changed = true;
             }
 
+            changed |= DropOldAttachments(limits.MaxAttachmentTokens);
+
             if (changed)
             {
                 Generation++;
@@ -224,6 +232,26 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
     }
 
     private static string? Normalize(string? memory) => string.IsNullOrWhiteSpace(memory) ? null : memory.Trim();
+
+    /// <summary>Empties the oldest attachments until the rest fit; never the newest turn's. Under the lock.</summary>
+    private bool DropOldAttachments(int maxTokens)
+    {
+        var total = _turns.Sum(t => t.Attachments?.Sum(a => a.EstimatedTokens) ?? 0);
+        var changed = false;
+        for (var i = 0; i < _turns.Count - 1 && total > maxTokens; i++)
+        {
+            if (_turns[i].Attachments is not { Count: > 0 } attachments || !attachments.Any(a => a.HasContent))
+            {
+                continue;
+            }
+
+            total -= attachments.Sum(a => a.EstimatedTokens);
+            _turns[i] = _turns[i] with { Attachments = [.. attachments.Select(a => a.WithoutContent())] };
+            changed = true;
+        }
+
+        return changed;
+    }
 
     /// <summary>A turn as the time provider sees now; for backends building one.</summary>
     internal DateTimeOffset Now => _time.GetUtcNow();
