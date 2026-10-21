@@ -27,6 +27,7 @@ using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Skills;
+using Clicky.Core.Suggestions;
 using Clicky.Core.Talk;
 using Clicky.Core.Updates;
 using Clicky.Core.Voice;
@@ -209,6 +210,22 @@ internal static class ServiceCollectionExtensions
             walkthroughs: sp.GetRequiredService<IWalkthroughs>(),
             context: conversation => sp.GetRequiredService<IAppSkills>().ContextFor(conversation, sp.GetRequiredService<IForegroundApp>().Current())));
         services.AddSingleton<TalkAnswerer>();
+
+        // M17 suggestions: daily read-only research, the morning card, "Do it" through the Talk loop.
+        services.AddSingleton(sp => new SuggestionStore(
+            Path.Combine(paths.Root, "suggestions.json"),
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<SuggestionStore>>()));
+        services.AddSingleton<ISuggestionModel, ClaudeSuggestionModel>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<SuggestionResearcher>();
+        services.AddSingleton<SuggestionEditor>();
+        services.AddSingleton<SuggestionEngine>();
+        services.AddSingleton<SuggestionCoordinator>();
+        services.AddSingleton<ITodaysIdeas>(sp => sp.GetRequiredService<SuggestionCoordinator>());
+
+        // Lazy for the tray menu: the coordinator's notifier needs the tray icon, so a direct one is a cycle.
+        services.AddSingleton(sp => new Lazy<ITodaysIdeas>(sp.GetRequiredService<ITodaysIdeas>));
         services.AddSingleton<HiddenBuddyCaption>();
 
         // M8 walkthroughs and app skills. The talk loop passes reply events to IWalkthroughs.Observe;
@@ -262,6 +279,7 @@ internal static class ServiceCollectionExtensions
         services.AddSettingsSection<MemorySettingsView>(SettingsPages.Memory);
         services.AddSettingsSection<ConnectorsSettingsView>(SettingsPages.Connectors);
         services.AddSettingsSection<ComputerUseSettingsView>(SettingsPages.Agents);
+        services.AddSettingsSection<SuggestionsSettingsView>(SettingsPages.Suggestions);
         services.AddSettingsSection<UpdatesSettingsView>(SettingsPages.Updates);
         services.AddTransient<SettingsWindow>();
         services.AddSingleton<Func<SettingsWindow>>(sp => sp.GetRequiredService<SettingsWindow>);
@@ -300,6 +318,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<ClickyStartup>();
         services.AddHostedService<WalkthroughStartup>();
         services.AddHostedService<OnboardingStartup>();
+        services.AddHostedService(sp => sp.GetRequiredService<SuggestionCoordinator>());
 
         return services;
     }

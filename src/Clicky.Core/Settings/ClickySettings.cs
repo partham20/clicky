@@ -52,6 +52,8 @@ public sealed record ClickySettings
 
     public AgentSettings Agent { get; init; } = new();
 
+    public SuggestionSettings Suggestions { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -77,6 +79,7 @@ public sealed record ClickySettings
         Ink = Ink ?? new(),
         Onboarding = (Onboarding ?? new()).Normalize(),
         Agent = (Agent ?? new()).Normalize(),
+        Suggestions = (Suggestions ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }
