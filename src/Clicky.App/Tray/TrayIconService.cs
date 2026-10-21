@@ -70,6 +70,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
             FontWeight = FontWeights.SemiBold,
         });
         menu.Items.Add(new MenuItem { Header = "Settings…", Command = viewModel.OpenSettingsCommand });
+        menu.Items.Add(new MenuItem { Header = "Take the tour…", Command = viewModel.OpenOnboardingCommand });
         menu.Items.Add(new MenuItem { Header = "New conversation", Command = viewModel.NewConversationCommand, ToolTip = "Clicky forgets what you talked about so far" });
         var ideas = new MenuItem { Header = "Today's ideas", ToolTip = "This morning's suggestions from your apps and the web" };
         ideas.Click += (_, _) => suggestions.Value.ShowToday();

@@ -46,6 +46,8 @@ public sealed record ClickySettings
 
     public InkSettings Ink { get; init; } = new();
 
+    public OnboardingSettings Onboarding { get; init; } = new();
+
     public AgentSettings Agent { get; init; } = new();
 
     public SuggestionSettings Suggestions { get; init; } = new();
@@ -72,6 +74,7 @@ public sealed record ClickySettings
         Dictation = (Dictation ?? new()).Normalize(),
         Text = (Text ?? new()).Normalize(),
         Ink = Ink ?? new(),
+        Onboarding = (Onboarding ?? new()).Normalize(),
         Agent = (Agent ?? new()).Normalize(),
         Suggestions = (Suggestions ?? new()).Normalize(),
         Debug = Debug ?? new(),

@@ -264,24 +264,29 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<WalkthroughDemo>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
-        services.AddTransient<HotkeysSettingsView>();
-        services.AddSingleton<Func<HotkeysSettingsView>>(sp => sp.GetRequiredService<HotkeysSettingsView>);
-        services.AddTransient<VoiceSettingsView>();
-        services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
-        services.AddTransient<SpeechSettingsView>();
-        services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
-        services.AddTransient<ClaudeSettingsView>();
-        services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
-        services.AddTransient<MemorySettingsView>();
-        services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
-        services.AddTransient<UpdatesSettingsView>();
-        services.AddSingleton<Func<UpdatesSettingsView>>(sp => sp.GetRequiredService<UpdatesSettingsView>);
         services.AddTransient<BugReportWindow>();
         services.AddSingleton<Func<BugReportWindow>>(sp => sp.GetRequiredService<BugReportWindow>);
-        services.AddTransient<ConnectorsSettingsView>();
-        services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
-        services.AddTransient<DictationSettingsView>();
-        services.AddSingleton<Func<DictationSettingsView>>(sp => sp.GetRequiredService<DictationSettingsView>);
+
+        // M18 Settings: each module adds its view to a page with one AddSettingsSection line.
+        services.AddSettingsSection<GeneralSettingsView>(SettingsPages.General);
+        services.AddSettingsSection<CursorSettingsView>(SettingsPages.Cursor);
+        services.AddSettingsSection<HotkeysSettingsView>(SettingsPages.Shortcuts);
+        services.AddSettingsSection<VoiceSettingsView>(SettingsPages.Voice);
+        services.AddSettingsSection<SpeechSettingsView>(SettingsPages.Voice, order: 10);
+        services.AddSettingsSection<TextModeSettingsView>(SettingsPages.TextMode);
+        services.AddSettingsSection<ClaudeSettingsView>(SettingsPages.Claude);
+        services.AddSettingsSection<DictationSettingsView>(SettingsPages.Dictation);
+        services.AddSettingsSection<MemorySettingsView>(SettingsPages.Memory);
+        services.AddSettingsSection<ConnectorsSettingsView>(SettingsPages.Connectors);
+        services.AddSettingsSection<ComputerUseSettingsView>(SettingsPages.Agents);
+        services.AddSettingsSection<SuggestionsSettingsView>(SettingsPages.Suggestions);
+        services.AddSettingsSection<UpdatesSettingsView>(SettingsPages.Updates);
+        services.AddTransient<SettingsWindow>();
+        services.AddSingleton<Func<SettingsWindow>>(sp => sp.GetRequiredService<SettingsWindow>);
+
+        // M18 onboarding: opens at startup until finished once (OnboardingStartup).
+        services.AddTransient<OnboardingWindow>();
+        services.AddSingleton<Func<OnboardingWindow>>(sp => sp.GetRequiredService<OnboardingWindow>);
 
         services.AddTransient<PreviewPane>();
         services.AddTransient<HomeWindow>();
@@ -310,6 +315,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<DictationCoordinator>();
         services.AddHostedService<ClickyStartup>();
         services.AddHostedService<WalkthroughStartup>();
+        services.AddHostedService<OnboardingStartup>();
         services.AddHostedService(sp => sp.GetRequiredService<SuggestionCoordinator>());
 
         return services;

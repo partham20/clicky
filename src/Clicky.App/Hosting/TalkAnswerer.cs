@@ -18,6 +18,9 @@ internal sealed class TalkAnswerer(TalkLoop talk, ReplyPresenter replies, IBuddy
     /// <summary>Longest question shown as the thinking caption.</summary>
     private const int QuestionCaptionChars = 120;
 
+    /// <summary>After each question, answered or not, on the asking thread. Onboarding's tutorial watches it.</summary>
+    public event EventHandler<TalkAnswered>? Answered;
+
     public Task<TalkResult> AskAsync(TalkQuestion question, CancellationToken cancellationToken = default) =>
         AskAsync(question, null, cancellationToken);
 
@@ -67,6 +70,7 @@ internal sealed class TalkAnswerer(TalkLoop talk, ReplyPresenter replies, IBuddy
                 break;
         }
 
+        Answered?.Invoke(this, new TalkAnswered(question, result));
         return result;
     }
 
@@ -102,3 +106,5 @@ internal sealed class TalkAnswerer(TalkLoop talk, ReplyPresenter replies, IBuddy
         ClearCaptionIf(caption);
     }
 }
+
+internal sealed record TalkAnswered(TalkQuestion Question, TalkResult Result);
