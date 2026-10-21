@@ -350,6 +350,10 @@ internal sealed class DictationCoordinator(
 
                         break;
 
+                    case InsertionMethod.None when result.Problem is null:
+                        // Nothing left to type (a "new paragraph" in a terminal).
+                        break;
+
                     case InsertionMethod.Copied:
                         ShowCard(result.Text, result.Problem ?? "On the clipboard.");
                         break;
