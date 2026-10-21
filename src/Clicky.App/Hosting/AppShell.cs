@@ -1,6 +1,7 @@
 using System.Windows;
 using Clicky.App.Buddy;
 using Clicky.App.Views;
+using Clicky.App.Views.Home;
 using Clicky.Core.Updates;
 using Microsoft.Extensions.Hosting;
 
@@ -30,19 +31,24 @@ public interface IAppShell
 
 internal sealed class AppShell(
     IHostApplicationLifetime lifetime,
-    Func<DockedBuddyView> dockedBuddy,
+    Func<HomeWindow> homeWindow,
     Func<SettingsWindow> settingsWindow,
     Func<OnboardingWindow> onboardingWindow,
     Func<BugReportWindow> bugReport,
     UpdateService updates) : IAppShell
 {
-    private PlaceholderWindow? _home;
+    private HomeWindow? _home;
     private SettingsWindow? _settings;
     private OnboardingWindow? _onboarding;
     private BugReportWindow? _bugReport;
 
     public void ShowHome() =>
-        _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14.", extra: dockedBuddy()));
+        _home = Activate(_home, () =>
+        {
+            var home = homeWindow();
+            home.OpenSettings = ShowSettings;
+            return home;
+        });
 
     public void ShowSettings() => _settings = Activate(_settings, settingsWindow);
 

@@ -8,7 +8,7 @@ namespace Clicky.App.Buddy;
 
 /// <summary>
 /// Home's buddy slot. With "Hide floating cursor" on, the buddy lives here instead of following the
-/// pointer. Lives in the M0 Home stub until the real Home window lands in M14.
+/// pointer. Shown at the top of Home's sidebar.
 /// </summary>
 internal sealed class DockedBuddyView : ContentControl
 {
