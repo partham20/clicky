@@ -72,10 +72,12 @@ public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, 
 /// guides from the skills folder (<see cref="Skills.IAppSkills.ContextFor"/>). Null for none.
 /// </param>
 /// <param name="Attachments">Documents and pictures to read with the question (text mode, M10); see <see cref="RequestAttachment"/>.</param>
+/// <param name="Step">For an agent step: what the previous reply's actions did.</param>
 public sealed record ClaudeRequest(
     string Text,
     RequestSource Source,
     RequestScreenshot? Screenshot = null,
     ModelTier? Tier = null,
     string? Context = null,
-    IReadOnlyList<RequestAttachment>? Attachments = null);
+    IReadOnlyList<RequestAttachment>? Attachments = null,
+    AgentStep? Step = null);

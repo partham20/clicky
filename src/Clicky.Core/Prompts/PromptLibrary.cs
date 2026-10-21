@@ -30,11 +30,29 @@ public static class PromptLibrary
 
     /// <summary>
     /// The user's turn as the model sees it: a line of screen context, then their words, marked as
-    /// spoken (so it expects recognition errors) or typed.
+    /// spoken (so it expects recognition errors) or typed. For an agent step with action tags, the
+    /// results of the previous actions come first (the API backend sends them as tool results).
     /// </summary>
-    public static string UserText(ClaudeRequest request)
+    public static string UserText(ClaudeRequest request, ActionDelivery delivery = ActionDelivery.Tools)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var text = new StringBuilder();
+        if (request.Step is { } step)
+        {
+            if (delivery == ActionDelivery.Tags && step.Results.Count > 0)
+            {
+                text.Append("[What your actions did:\n");
+                foreach (var result in step.Results)
+                {
+                    text.Append(CultureInfo.InvariantCulture, $"- {result.Name}: {(result.IsError ? "FAILED: " : string.Empty)}{result.Text}\n");
+                }
+
+                text.Append("]\n");
+            }
+
+            text.Append(CultureInfo.InvariantCulture, $"[Agent step {step.Number} of at most {step.MaxSteps}.]\n");
+        }
+
         if (request.Screenshot is { } shot)
         {
             text.Append(CultureInfo.InvariantCulture, $"[Screenshot: {shot.Geometry.ImageWidth} x {shot.Geometry.ImageHeight} pixels.");

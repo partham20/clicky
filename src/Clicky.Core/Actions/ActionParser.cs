@@ -115,8 +115,15 @@ public static class ActionParser
         StepAction { Total: { } total, Index: var index } when index > total => "index is past total",
         StepAction { X: null, Y: not null } or StepAction { X: not null, Y: null } => "step needs both x and y, or neither",
         SayAction { Text: var text } when string.IsNullOrWhiteSpace(text) => "text is blank",
+        OpenUrlAction { Url: var url } when !IsWebAddress(url) => "url must be an absolute http or https address",
         _ => null,
     };
+
+    /// <summary>True for an absolute http(s) address with a host: no file:, javascript: or relative paths.</summary>
+    public static bool IsWebAddress(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+        && !string.IsNullOrEmpty(uri.Host);
 
     public static string Serialize(ClickyAction action) => JsonSerializer.Serialize(action, ActionJsonContext.Default.ClickyAction);
 }
