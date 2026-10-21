@@ -9,14 +9,115 @@ public sealed class GestureEngineTests
     private const int KeyC = 'C';
     private const int KeyQ = 'Q';
 
+    // _events: what most tests care about, without the Pending/Cancelled pair of a hold that never
+    // armed. _allEvents: everything, for the Pending tests.
     private readonly List<HotkeyEvent> _events = [];
+    private readonly List<HotkeyEvent> _allEvents = [];
+    private readonly HashSet<HotkeyAction> _pending = [];
     private readonly GestureEngine _engine;
     private long _now = 10_000;
 
     public GestureEngineTests()
     {
-        _engine = new GestureEngine(_events.Add);
+        _engine = new GestureEngine(Record);
         Bind(Defaults(tripleTapEnabled: false));
+    }
+
+    [Fact]
+    public void Ctrl_alt_hold_is_pending_as_soon_as_both_keys_are_down()
+    {
+        Down(LeftControl);
+        Assert.Empty(_allEvents);
+
+        Down(LeftMenu);
+        var pending = Assert.Single(_allEvents);
+        Assert.Equal((HotkeyAction.Talk, HotkeyPhase.Pending), (pending.Action, pending.Phase));
+        Assert.Equal(_now, pending.TimestampMs);
+
+        Wait(GestureEngine.HoldArmMs);
+        Up(LeftMenu);
+        Up(LeftControl);
+        AssertAllEvents(
+            (HotkeyAction.Talk, HotkeyPhase.Pending),
+            (HotkeyAction.Talk, HotkeyPhase.Started),
+            (HotkeyAction.Talk, HotkeyPhase.Ended));
+    }
+
+    [Fact]
+    public void Pending_talk_is_cancelled_by_ctrl_alt_a_before_open_home_fires()
+    {
+        Down(LeftControl);
+        Down(LeftMenu);
+        Wait(50);
+        Tap(KeyA);
+        Up(LeftMenu);
+        Up(LeftControl);
+
+        AssertAllEvents(
+            (HotkeyAction.Talk, HotkeyPhase.Pending),
+            (HotkeyAction.Talk, HotkeyPhase.Cancelled),
+            (HotkeyAction.OpenHome, HotkeyPhase.Fired));
+    }
+
+    [Fact]
+    public void Pending_talk_is_cancelled_by_a_quick_release_and_by_adding_a_modifier()
+    {
+        Down(LeftControl);
+        Down(LeftMenu);
+        Up(LeftMenu);
+        Up(LeftControl);
+        AssertAllEvents((HotkeyAction.Talk, HotkeyPhase.Pending), (HotkeyAction.Talk, HotkeyPhase.Cancelled));
+
+        _allEvents.Clear();
+        Wait(1000);
+        Down(LeftControl);
+        Down(LeftMenu);
+        Down(LeftShift);
+        Wait(500);
+        Up(LeftShift);
+        Up(LeftMenu);
+        Up(LeftControl);
+        AssertAllEvents((HotkeyAction.Talk, HotkeyPhase.Pending), (HotkeyAction.Talk, HotkeyPhase.Cancelled));
+    }
+
+    [Fact]
+    public void Every_pending_ends_in_started_or_cancelled()
+    {
+        // A mix of everything: holds, taps, presses, AltGr, a reset mid-hold.
+        Down(LeftControl);
+        Down(LeftMenu);
+        Wait(300);
+        Up(LeftControl);
+        Up(LeftMenu);
+        Tap(LeftControl);
+        Tap(LeftControl);
+        Down(LeftControl);
+        Down(LeftWin);
+        Wait(20);
+        Up(LeftWin);
+        Up(LeftControl);
+        Down(LeftControl);
+        Down(LeftMenu);
+        _engine.Reset(_now);
+        Wait(1000);
+
+        var open = new HashSet<HotkeyAction>();
+        foreach (var e in _allEvents)
+        {
+            switch (e.Phase)
+            {
+                case HotkeyPhase.Pending:
+                    Assert.True(open.Add(e.Action));
+                    break;
+                case HotkeyPhase.Started when open.Remove(e.Action):
+                    break;
+                case HotkeyPhase.Cancelled:
+                    open.Remove(e.Action);
+                    break;
+            }
+        }
+
+        Assert.Empty(open);
     }
 
     [Fact]
@@ -476,4 +577,25 @@ public sealed class GestureEngineTests
 
     private void AssertEvents(params (HotkeyAction Action, HotkeyPhase Phase)[] expected) =>
         Assert.Equal(expected, _events.Select(e => (e.Action, e.Phase)));
+
+    private void AssertAllEvents(params (HotkeyAction Action, HotkeyPhase Phase)[] expected) =>
+        Assert.Equal(expected, _allEvents.Select(e => (e.Action, e.Phase)));
+
+    private void Record(HotkeyEvent e)
+    {
+        _allEvents.Add(e);
+        switch (e.Phase)
+        {
+            case HotkeyPhase.Pending:
+                Assert.True(_pending.Add(e.Action), $"{e.Action} was already pending");
+                return;
+            case HotkeyPhase.Cancelled when _pending.Remove(e.Action):
+                return;
+            case HotkeyPhase.Started:
+                _pending.Remove(e.Action);
+                break;
+        }
+
+        _events.Add(e);
+    }
 }

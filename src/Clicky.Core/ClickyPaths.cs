@@ -8,13 +8,21 @@ public sealed class ClickyPaths
 {
     public const string AppFolderName = "Clicky";
 
-    public ClickyPaths(string root)
+    /// <param name="root">Settings, logs and other small per-user data.</param>
+    /// <param name="localRoot">
+    /// Large, re-downloadable data (speech models), kept out of a roaming profile. Defaults to
+    /// <paramref name="root"/>.
+    /// </param>
+    public ClickyPaths(string root, string? localRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(root);
         Root = Path.GetFullPath(root);
+        LocalRoot = string.IsNullOrWhiteSpace(localRoot) ? Root : Path.GetFullPath(localRoot);
     }
 
     public string Root { get; }
+
+    public string LocalRoot { get; }
 
     public string SettingsFile => Path.Combine(Root, "settings.json");
 
@@ -27,7 +35,16 @@ public sealed class ClickyPaths
     /// <summary>Only written when settings.debug.saveCaptures is on.</summary>
     public string DebugCapturesDirectory => Path.Combine(Root, "debug", "captures");
 
-    /// <summary>%AppData%\Clicky (roaming), overridable with CLICKY_DATA_DIR for dev/test.</summary>
+    /// <summary>Only written when settings.debug.saveAudio is on.</summary>
+    public string DebugAudioDirectory => Path.Combine(Root, "debug", "audio");
+
+    /// <summary>Whisper models, %LocalAppData%\Clicky\models by default.</summary>
+    public string ModelsDirectory => Path.Combine(LocalRoot, "models");
+
+    /// <summary>
+    /// %AppData%\Clicky (roaming) plus %LocalAppData%\Clicky for models. CLICKY_DATA_DIR overrides
+    /// both for dev/test.
+    /// </summary>
     public static ClickyPaths CreateDefault()
     {
         var overrideRoot = Environment.GetEnvironmentVariable("CLICKY_DATA_DIR");
@@ -37,7 +54,8 @@ public sealed class ClickyPaths
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.Create);
-        return new ClickyPaths(Path.Combine(appData, AppFolderName));
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
+        return new ClickyPaths(Path.Combine(appData, AppFolderName), Path.Combine(localAppData, AppFolderName));
     }
 
     public void EnsureCreated()
