@@ -35,9 +35,17 @@ public interface IAgentCard : IPermissionPrompter, IDisposable
 
 /// <summary>Options for a run that nobody is watching (M14 Clickys, M15 routines).</summary>
 /// <param name="MaxSteps">Overrides settings.agent.maxSteps.</param>
-/// <param name="Unattended">No card and no countdown. Permission questions go to <paramref name="Permissions"/>.</param>
+/// <param name="Unattended">
+/// No card, no countdown and no memory turn (the caller keeps its own record). Permission questions
+/// go to <paramref name="Permissions"/>.
+/// </param>
 /// <param name="Permissions">Who answers permission questions when unattended; null refuses everything that needs asking.</param>
-public sealed record AgentRunOptions(int? MaxSteps = null, bool Unattended = false, IPermissionPrompter? Permissions = null)
+/// <param name="PreApproved">
+/// The user already allowed acting for this run (a Clicky set to use the computer): ordinary actions
+/// and connector tools run without asking. Anything that sends, deletes, buys or can't be undone is
+/// still asked about, and moving the real mouse is too.
+/// </param>
+public sealed record AgentRunOptions(int? MaxSteps = null, bool Unattended = false, IPermissionPrompter? Permissions = null, bool PreApproved = false)
 {
     public static AgentRunOptions Default { get; } = new();
 }

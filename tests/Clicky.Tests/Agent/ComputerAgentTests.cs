@@ -244,6 +244,28 @@ public sealed class ComputerAgentTests
     }
 
     [Fact]
+    public async Task A_clicky_set_to_use_the_computer_acts_alone_but_never_on_irreversible_steps()
+    {
+        var assistant = new ScriptedAssistant(Reply(new ClickAction(2, 2, Target: "Send")));
+        var actor = new ComputerAgentClickyActor(Agent(assistant));
+        _computer.Target = a => a is ClickAction { Target: "Send" } ? new ControlTarget("Send", "button", "Outlook", "olk") : new ControlTarget("New message", "button", "Outlook", "olk");
+        var first = Reply(new ClickAction(1, 1, Target: "New message"));
+
+        Assert.True(actor.WantsToAct(first));
+        var events = new List<ReplyEvent>();
+        await foreach (var replyEvent in actor.ContinueAsync(Conversation(), first, Shot, new Clicky.Core.Clickys.ClickyActorOptions(5), CancellationToken.None))
+        {
+            events.Add(replyEvent);
+        }
+
+        Assert.Empty(_presenter.Cards);
+        Assert.Equal([new ClickAction(1, 1, Target: "New message")], _computer.Executed.Select(e => e.Action));
+        Assert.Contains("nobody is there", assistant.Requests[1].Step!.Results[0].Text, StringComparison.Ordinal);
+        Assert.Empty(_memory.Turns); // The Clicky keeps its own record.
+        Assert.Equal(2, events.OfType<ReplyCompleted>().Count());
+    }
+
+    [Fact]
     public async Task Administrator_windows_and_a_disabled_agent_are_refused_without_acting()
     {
         var assistant = new ScriptedAssistant();

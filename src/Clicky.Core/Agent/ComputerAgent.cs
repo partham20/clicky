@@ -131,7 +131,7 @@ public sealed class ComputerAgent(
         var task = TaskText(conversation);
         using var card = options.Unattended ? null : presenter.Begin(task, screenshot?.Geometry.Source);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, card?.StopRequested ?? CancellationToken.None);
-        var run = new Run(GateFor(conversation), card, options.Unattended ? options.Permissions : card, options.Unattended, agentSettings);
+        var run = new Run(GateFor(conversation), card, options.Unattended ? options.Permissions : card, options.Unattended, options.PreApproved, agentSettings);
         var spoken = new StringBuilder();
         var reply = completed;
         var shot = screenshot;
@@ -268,7 +268,7 @@ public sealed class ComputerAgent(
         {
             logger.LogInformation("Agent run ended after {Steps} steps: {Ending}", step, ending);
             card?.Finish(ending, success);
-            if (memory is not null && task.Length > 0)
+            if (memory is not null && task.Length > 0 && !options.Unattended)
             {
                 var said = (summary ?? spoken.ToString()).Trim();
                 memory.RecordTurn(new MemoryTurn(task, said.Length > 500 ? said[..500] + "…" : said.Length > 0 ? said : ending, _time.GetUtcNow(), MemoryTurnMode.Agent));
@@ -559,7 +559,7 @@ public sealed class ComputerAgent(
                 }
 
                 var toolRisk = RiskClassifier.Classify(tool);
-                var askTool = tool.NeedsConfirmation && !(approvedAhead || (!toolRisk.Irreversible && run.Gate.AlwaysTool(tool.Name)));
+                var askTool = tool.NeedsConfirmation && !(approvedAhead || (!toolRisk.Irreversible && (run.PreApproved || run.Gate.AlwaysTool(tool.Name))));
                 return new Planned(call, action, name, ItemKind.Tool, Describe(action, ControlTarget.Unknown, tool), toolRisk, askTool, Tool: tool);
             case { ControlsComputer: true }:
                 if (!run.Settings.Enabled)
@@ -591,7 +591,7 @@ public sealed class ComputerAgent(
                 }
 
                 var risk = RiskClassifier.Classify(action, target);
-                var ask = !approvedAhead && (risk.Irreversible || !run.Gate.AlwaysControl);
+                var ask = !approvedAhead && (risk.Irreversible || !(run.PreApproved || run.Gate.AlwaysControl));
                 return new Planned(call, action, name, ItemKind.Control, description, risk, ask);
             default:
                 return new Planned(call, action, name, ItemKind.Show, name, Risk.Normal);
@@ -667,7 +667,7 @@ public sealed class ComputerAgent(
         }
     }
 
-    private sealed class Run(PermissionGate gate, IAgentCard? card, IPermissionPrompter? prompter, bool unattended, AgentSettings settings)
+    private sealed class Run(PermissionGate gate, IAgentCard? card, IPermissionPrompter? prompter, bool unattended, bool preApproved, AgentSettings settings)
     {
         public PermissionGate Gate { get; } = gate;
 
@@ -677,6 +677,9 @@ public sealed class ComputerAgent(
         public IPermissionPrompter? Prompter { get; } = prompter;
 
         public bool Unattended { get; } = unattended;
+
+        /// <summary>Ordinary actions need no question (see <see cref="AgentRunOptions.PreApproved"/>).</summary>
+        public bool PreApproved { get; } = preApproved;
 
         public AgentSettings Settings { get; } = settings;
 

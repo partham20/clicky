@@ -143,9 +143,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<ConnectorHub>();
         services.AddSingleton<IConnectorTools>(sp => sp.GetRequiredService<ConnectorHub>());
 
-        // M14 Clickys: persistent helpers in clickys.db. Until M13 lands they chat and use connectors only.
+        // M14 Clickys: persistent helpers in clickys.db. They act on the computer through M13's agent (registered below).
         services.AddSingleton<IClickyModel, AssistantClickyModel>();
-        services.AddSingleton<IClickyActor, ChatOnlyClickyActor>();
+        services.AddSingleton<IClickyActor>(sp => new ComputerAgentClickyActor(sp.GetRequiredService<ComputerAgent>()));
         services.AddSingleton(sp => new ClickyService(
             paths,
             sp.GetRequiredService<IClickyModel>(),
