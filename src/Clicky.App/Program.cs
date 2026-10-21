@@ -71,13 +71,16 @@ public static class Program
 
             var tray = host.Services.GetRequiredService<TrayIconService>();
             var buddy = host.Services.GetRequiredService<FloatingBuddy>();
+            var hiddenBuddyCaption = host.Services.GetRequiredService<HiddenBuddyCaption>();
             app.Startup += (_, _) =>
             {
                 tray.Show();
                 buddy.Start();
+                hiddenBuddyCaption.Start();
             };
             app.Exit += (_, _) =>
             {
+                hiddenBuddyCaption.Dispose();
                 buddy.Dispose();
                 host.Services.GetRequiredService<OverlayHost>().Dispose();
                 tray.Dispose();

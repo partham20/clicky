@@ -6,6 +6,26 @@ using Microsoft.Extensions.Logging;
 
 namespace Clicky.Core.Assistant;
 
+/// <summary>What the Talk loop needs from <see cref="ClaudeAssistant"/>; an interface so it can be tested without a backend.</summary>
+public interface IClaudeAssistant
+{
+    /// <summary>Raised (on the calling thread) when a conversation is dropped: replaced after going idle, or <see cref="NewConversation"/>.</summary>
+    event EventHandler<Conversation>? ConversationEnded;
+
+    /// <summary>The conversation the next question belongs to; <paramref name="memory"/> is used only when a new one starts.</summary>
+    Conversation CurrentConversation(string? memory = null);
+
+    /// <summary>Forgets the conversation; the next question starts fresh.</summary>
+    void NewConversation();
+
+    /// <summary>The user pressed Talk: let the active backend get ready. Never throws.</summary>
+    void Prepare(string? memory = null);
+
+    /// <summary>Routes the request, then streams the active backend's reply; the first event is <see cref="ReplyStarted"/>.</summary>
+    /// <exception cref="ClaudeBackendException">Not set up, or the request failed.</exception>
+    IAsyncEnumerable<ReplyEvent> ReplyAsync(Conversation conversation, ClaudeRequest request, CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// The one place the rest of the app asks Claude: picks the backend from settings, routes each
 /// question to the fast or deep model, and keeps the running conversation (a new one starts after
@@ -17,11 +37,13 @@ public sealed class ClaudeAssistant(
     AnthropicApiBackend api,
     ClaudeCodeBackend subscription,
     ILogger<ClaudeAssistant> logger,
-    TimeProvider? time = null) : IMemoryModel
+    TimeProvider? time = null) : IClaudeAssistant, IMemoryModel
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly Lock _gate = new();
     private Conversation? _conversation;
+
+    public event EventHandler<Conversation>? ConversationEnded;
 
     /// <summary>The backend settings.claude.backend selects.</summary>
     public IClaudeBackend Active => Backend(settings.Current.Claude.Backend);
@@ -35,6 +57,8 @@ public sealed class ClaudeAssistant(
     public Conversation CurrentConversation(string? memory = null)
     {
         var idle = TimeSpan.FromMinutes(settings.Current.Claude.IdleResetMinutes);
+        Conversation? ended = null;
+        Conversation current;
         lock (_gate)
         {
             if (_conversation is null || _conversation.IsIdle(idle))
@@ -42,21 +66,37 @@ public sealed class ClaudeAssistant(
                 if (_conversation is not null)
                 {
                     logger.LogInformation("Conversation {Conversation} idle for {Minutes} min; starting a new one", _conversation.Id, idle.TotalMinutes);
+                    ended = _conversation;
                 }
 
                 _conversation = new Conversation(_time, memory);
             }
 
-            return _conversation;
+            current = _conversation;
         }
+
+        if (ended is not null)
+        {
+            ConversationEnded?.Invoke(this, ended);
+        }
+
+        return current;
     }
 
     /// <summary>Forgets the conversation; the next question starts fresh.</summary>
     public void NewConversation()
     {
+        Conversation? ended;
         lock (_gate)
         {
+            ended = _conversation;
             _conversation = null;
+        }
+
+        if (ended is not null)
+        {
+            logger.LogInformation("Conversation {Conversation} cleared", ended.Id);
+            ConversationEnded?.Invoke(this, ended);
         }
     }
 

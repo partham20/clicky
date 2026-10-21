@@ -64,6 +64,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
             FontWeight = FontWeights.SemiBold,
         });
         menu.Items.Add(new MenuItem { Header = "Settings…", Command = viewModel.OpenSettingsCommand });
+        menu.Items.Add(new MenuItem { Header = "New conversation", Command = viewModel.NewConversationCommand, ToolTip = "Clicky forgets what you talked about so far" });
         menu.Items.Add(new Separator());
 
         var startWithWindows = new MenuItem { Header = "Start with Windows", IsCheckable = true };
@@ -80,7 +81,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
 
         menu.Items.Add(BuildBuddyStatePreviewMenu());
 
-        // Until the talk loop (M6) draws marks, this shows each kind on the monitor under the pointer.
+        // Preview: shows each kind of mark on the monitor under the pointer.
         var drawingDemo = new MenuItem { Header = "Drawing demo (preview)" };
         drawingDemo.Click += (_, _) => annotationDemo.Play();
         menu.Items.Add(drawingDemo);
@@ -100,7 +101,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
         return menu;
     }
 
-    // Until the talk loop (M6) drives the buddy, this is the only way to see each state.
+    // Preview: shows each buddy state without having to talk.
     private MenuItem BuildBuddyStatePreviewMenu()
     {
         var parent = new MenuItem { Header = "Buddy state (preview)" };

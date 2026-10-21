@@ -131,11 +131,17 @@ public sealed class WalkthroughEngineTests : IDisposable
     {
         await StartAsync();
 
+        var mark = _renderer.LastMark;
         Send(_engine, Shot, new SayAction("That's the ribbon."));
         await _engine.FlushAsync();
 
         Assert.Equal(WalkthroughPhase.Waiting, _engine.Current?.Phase);
         Assert.Equal(1, _engine.Current?.Current?.Index);
+
+        // The talk loop cleared the screen for the question; the step comes back.
+        Assert.True(mark.Dismissed);
+        Assert.Equal(2, _renderer.Shown.Count);
+        Assert.False(_renderer.LastMark.Dismissed);
     }
 
     [Fact]

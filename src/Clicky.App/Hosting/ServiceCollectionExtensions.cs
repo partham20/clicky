@@ -20,6 +20,7 @@ using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Skills;
+using Clicky.Core.Talk;
 using Clicky.Core.Voice;
 using Clicky.Core.Walkthroughs;
 using Clicky.Platform.Windows.Audio;
@@ -110,6 +111,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<AnthropicApiBackend>();
         services.AddSingleton<ClaudeCodeBackend>();
         services.AddSingleton<ClaudeAssistant>();
+        services.AddSingleton<IClaudeAssistant>(sp => sp.GetRequiredService<ClaudeAssistant>());
 
         // Memory updates run on the active backend's fast model.
         services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
@@ -158,6 +160,19 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<InkTrailService>();
         services.AddSingleton<IInkTrailService>(sp => sp.GetRequiredService<InkTrailService>());
         services.AddSingleton<InkTrailDemo>();
+
+        // M6 Talk: the computer-use agent (M13) is optional; TalkLoop hands over to it when registered.
+        services.AddSingleton(sp => new TalkLoop(
+            sp.GetRequiredService<IClaudeAssistant>(),
+            sp.GetRequiredService<IMemoryService>(),
+            sp.GetRequiredService<IAnnotationRenderer>(),
+            sp.GetRequiredService<IInkTrailService>(),
+            sp.GetRequiredService<ILogger<TalkLoop>>(),
+            sp.GetService<IComputerAgent>(),
+            walkthroughs: sp.GetRequiredService<IWalkthroughs>(),
+            context: conversation => sp.GetRequiredService<IAppSkills>().ContextFor(conversation, sp.GetRequiredService<IForegroundApp>().Current())));
+        services.AddSingleton<TalkAnswerer>();
+        services.AddSingleton<HiddenBuddyCaption>();
 
         // M8 walkthroughs and app skills. The talk loop passes reply events to IWalkthroughs.Observe;
         // the engine's own "what next?" requests go through SwitchableWalkthroughTurns.

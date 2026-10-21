@@ -253,6 +253,22 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
         {
             StartSettle(session);
         }
+        else
+        {
+            ReshowCurrent(session);
+        }
+    }
+
+    /// <summary>The talk loop clears the screen when the user starts asking; put the step back once the question is over.</summary>
+    private void ReshowCurrent(Session session)
+    {
+        if (session.Phase != WalkthroughPhase.Waiting || session.Steps.Count == 0 || session.Steps[^1] is not { Status: WalkthroughStepStatus.Current } step)
+        {
+            return;
+        }
+
+        session.Marker?.Dismiss();
+        session.Marker = _renderer.Show(step.Action, step.Geometry, new AnnotationOptions(Hold: Timeout.InfiniteTimeSpan));
     }
 
     // ---- Steps ----
@@ -679,6 +695,10 @@ public sealed class WalkthroughEngine : IWalkthroughs, IDisposable
             // Pressed Talk and said nothing, or the answer has been spoken. Leave a moment for a question
             // that is still being transcribed to start its reply (which defers us again).
             StartSettle(session, _options.AfterQuestion);
+        }
+        else if (wasTalking && _session is { } waiting && !UserReplyInFlight)
+        {
+            ReshowCurrent(waiting);
         }
     }
 
