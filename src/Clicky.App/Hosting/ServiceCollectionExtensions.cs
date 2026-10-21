@@ -1,12 +1,17 @@
 using System.Net.Http;
 using System.Windows.Threading;
+using Clicky.App.Annotations;
 using Clicky.App.Buddy;
 using Clicky.App.Tray;
 using Clicky.App.Views;
 using Clicky.Core;
+using Clicky.Core.Annotations;
+using Clicky.Core.Assistant;
+using Clicky.Core.Assistant.ClaudeCode;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Diagnostics;
+using Clicky.Core.Connectors;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
@@ -18,6 +23,7 @@ using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
+using Clicky.Platform.Windows.Shell;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Speech;
 using Clicky.Platform.Windows.Startup;
@@ -93,7 +99,13 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();
 
-        // Memory is read into every prompt now; updates start once a backend registers IMemoryModel.
+        // Claude: both backends stay registered so Settings can switch between them live.
+        services.AddSingleton<AnthropicApiBackend>();
+        services.AddSingleton<ClaudeCodeBackend>();
+        services.AddSingleton<ClaudeAssistant>();
+
+        // Memory updates run on the active backend's fast model.
+        services.AddSingleton<IMemoryModel>(sp => sp.GetRequiredService<ClaudeAssistant>());
         services.AddSingleton(sp => new MemoryStore(paths.MemoryDirectory, sp.GetRequiredService<ILogger<MemoryStore>>()));
         services.AddSingleton(sp => new MemoryService(
             sp.GetRequiredService<MemoryStore>(),
@@ -108,10 +120,22 @@ internal static class ServiceCollectionExtensions
             sp.GetRequiredService<ISettingsStore>(),
             sp.GetRequiredService<ILogger<UpdateService>>()));
         services.AddSingleton(sp => new BugReportWriter(paths, sp.GetRequiredService<ILogger<BugReportWriter>>()));
+        // M16 connectors: backends and the agent loop take IConnectorTools.
+        services.AddSingleton<IBrowserLauncher, ShellBrowserLauncher>();
+        services.AddSingleton<ConnectorSecrets>();
+        services.AddSingleton<IMcpSessionFactory, SdkMcpSessionFactory>();
+        services.AddSingleton<ConnectorHub>();
+        services.AddSingleton<IConnectorTools>(sp => sp.GetRequiredService<ConnectorHub>());
 
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
+
+        // M7 marks: safe to resolve on any thread; the overlay host is only touched on the UI thread.
+        services.AddSingleton(sp => new Lazy<OverlayHost>(sp.GetRequiredService<OverlayHost>));
+        services.AddSingleton<AnnotationRenderer>();
+        services.AddSingleton<IAnnotationRenderer>(sp => sp.GetRequiredService<AnnotationRenderer>());
+        services.AddSingleton<AnnotationDemo>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
         services.AddTransient<HotkeysSettingsView>();
@@ -120,12 +144,16 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
         services.AddTransient<SpeechSettingsView>();
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
+        services.AddTransient<ClaudeSettingsView>();
+        services.AddSingleton<Func<ClaudeSettingsView>>(sp => sp.GetRequiredService<ClaudeSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
         services.AddTransient<UpdatesSettingsView>();
         services.AddSingleton<Func<UpdatesSettingsView>>(sp => sp.GetRequiredService<UpdatesSettingsView>);
         services.AddTransient<BugReportWindow>();
         services.AddSingleton<Func<BugReportWindow>>(sp => sp.GetRequiredService<BugReportWindow>);
+        services.AddTransient<ConnectorsSettingsView>();
+        services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
@@ -139,6 +167,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
         services.AddHostedService<UpdateStartup>();
+        services.AddHostedService<ConnectorStartup>();
 
         return services;
     }

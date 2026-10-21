@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
+using Clicky.App.Annotations;
 using Clicky.Core.Buddy;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
@@ -9,7 +10,7 @@ using H.NotifyIcon.Core;
 namespace Clicky.App.Tray;
 
 /// <summary>Owns the notification-area icon. Create, show and dispose on the UI thread.</summary>
-public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
+public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo) : IDisposable
 {
     private TaskbarIcon? _icon;
 
@@ -81,6 +82,11 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
         menu.Items.Add(quietMode);
 
         menu.Items.Add(BuildBuddyStatePreviewMenu());
+
+        // Until the talk loop (M6) draws marks, this shows each kind on the monitor under the pointer.
+        var drawingDemo = new MenuItem { Header = "Drawing demo (preview)" };
+        drawingDemo.Click += (_, _) => annotationDemo.Play();
+        menu.Items.Add(drawingDemo);
 
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Report a bug…", Command = viewModel.ReportBugCommand });

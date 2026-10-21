@@ -7,7 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="ModelContextProtocol.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The action schema and prompts ship inside the assembly; names are fixed so code can find them. -->
+    <EmbeddedResource Include="Actions/actions.schema.json" LogicalName="Clicky.Core.Actions.actions.schema.json" />
+    <EmbeddedResource Include="Prompts/*.md" LogicalName="Clicky.Core.Prompts.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

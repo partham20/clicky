@@ -7,7 +7,7 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, and later prompts, action schema, backends, agent loop. No Windows APIs |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, prompts, the action schema, the Claude backends and router, memory, and later the agent loop. No Windows APIs |
 | `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
@@ -23,7 +23,8 @@ dotnet run --project src/Clicky.App
 
 Package versions are pinned centrally in `Directory.Packages.props`. Warnings are errors.
 
-Installer: `.uild\pack.ps1 -Version 0.2.0` publishes a self-contained win-x64 build and packs it with Velopack (`vpk`, pinned in `dotnet-tools.json`) into `artifactseleases`. Releases are cut by `.github/workflows/release.yml` (see Install and updates below).
+Installer: `.uild\pack.ps1 -Version 0.2.0` publishes a self-contained win-x64 build and packs it with Velopack (`vpk`, pinned in `dotnet-tools.json`) into `artifacts
+eleases`. Releases are cut by `.github/workflows/release.yml` (see Install and updates below).
 
 ## Data
 
@@ -37,6 +38,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `debug.saveCaptures`: also write every screenshot to `debug\captures\yyyyMMdd-HHmmss.png`, with a red crosshair where the pointer maps to. Off by default; nothing else writes screenshots to disk.
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
+- `claude`: `backend` (`Api` or `Subscription`), `routing` (`Auto`, `AlwaysFast`, `AlwaysDeep`), `apiFastModel` (`claude-haiku-5-5`), `apiDeepModel` (`claude-opus-5-5`), `subscriptionFastModel` (`haiku`), `subscriptionDeepModel` (`opus`), `fastEffort` (`Low`), `deepEffort` (`Medium`), `maxTurns` (40), `idleResetMinutes` (10), `cliPath` (empty finds `claude.exe`). Also in Settings › Claude. The Anthropic key is in Credential Manager as `Clicky/anthropic-api-key` (or `ANTHROPIC_API_KEY` for development).
 - `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
@@ -112,6 +114,26 @@ Replies are spoken sentence by sentence as their text arrives: the buddy shows S
 - **Overlays are not full-screen windows.** The shell treats a topmost window the size of the monitor as a full-screen app, so before M4 the buddy's overlays switched on Windows' automatic Focus Assist and reported the user as busy to every app. They now carry the shell's `NonRudeHWND` opt-out.
 - **settings.json** saved as "UTF-8 with BOM" (Notepad and PowerShell can do that) used to count as corrupt; it now loads.
 
+## Claude backends and actions (M5)
+
+Two backends behind `IClaudeBackend`, switchable live in Settings › Claude, both streaming the same events: spoken text as it arrives, then validated actions, then usage and the stop reason.
+
+- **API key** (`AnthropicApiBackend`): the official Anthropic C# SDK, streaming, the screenshot inline as base64, every non-speech action as a strict tool, adaptive thinking with per-tier effort, prompt caching on the fixed system prompt and tools plus automatic caching of history, and the server's default refusal fallback.
+- **Claude subscription** (`ClaudeCodeBackend`): Claude Code headless, `claude -p` with stream-json in and out, so there is no API bill. It runs with no tools, MCP servers, settings, CLAUDE.md, skills or hooks (`--safe-mode`), in an empty folder (`%LocalAppData%\Clicky\claude-code`), without saving the session, and without the API key variables so it uses the subscription. Starting it takes 2-3 s, so one process is kept per conversation: it starts when Talk is pressed (M6) and later turns reuse it; the router switches its model with a control message instead of a restart. Barge-in sends an interrupt and keeps the process warm. Claude Code takes no custom tools, so the model writes actions as `<action>{…}</action>` tags that go through the same validation.
+- **Action schema**: `Clicky.Core/Actions/actions.schema.json` (say, point, highlight, draw, step, click, type, key, scroll, wait, ask_permission, done) is the single source: the API backend makes tools from it, the subscription prompt embeds it, and every action is validated against it and checked against the screenshot (up to 8 px past an edge is pulled in, further is dropped and logged). Speech is plain text rather than a `say` tool call so it streams straight into the sentence speaker; it still comes out as `say` actions in the finished reply.
+- **Prompts** live as Markdown in `Clicky.Core/Prompts` (embedded). The system prompt never changes within a run, so it stays cached; memory is fixed per conversation.
+- **Router**: rules, not a model call. Short questions go to the fast model; "explain", "why", "walk me through", "fix", writing, long questions and agent steps go deep. Defaults: Haiku 5.5 (low effort) and Opus 5.5 (medium) on the API, `haiku` and `opus` on the subscription.
+- **History**: the last 40 turns, trimmed 10 at a time and with old screenshots dropped in batches (at most 6 kept), so the cached prefix only changes every few turns. A conversation idle for 10 minutes starts over.
+
+## Point, highlight and draw (M7)
+
+`IAnnotationRenderer.Show(action, capture.Geometry)` puts a point, highlight, draw or step action on the overlays in a hand-drawn marker style: a pointer flies from the buddy (or from the previous pointer) to its spot and rings it, boxes and shapes draw themselves in with a slight wobble and overshoot, and labels pop up beside them in a handwriting font. Marks hold for 8 s (pointer), 10 s (shapes) or 60 s (steps) after drawing, then fade; `AnnotationOptions.Hold` overrides that, and `DismissAll()` clears the screen for the next question. Only one pointer shows at a time and at most 12 marks.
+
+- The wobble is pure geometry in `Clicky.Core/Annotations` (`RoughSketch`, seeded, so it is testable and steady while animating); the planner maps screenshot pixels to physical pixels and refuses off-screen coordinates; `AnnotationBoard` and `AnnotationTimeline` decide what animates when.
+- Frames are rendered only while something flies, draws in or fades; a still mark costs nothing but a one-shot timer for its fade, and only monitors with ink on them are redrawn.
+- The overlays stay visible while any mark is up, even with the floating cursor hidden.
+- Tray › Drawing demo (preview) plays every kind of mark on the monitor under the pointer.
+
 ## Memory (M11)
 
 Two Markdown files in `%AppData%\Clicky\memory`, both plain text you can edit in Settings › Memory or any editor:
@@ -129,11 +151,23 @@ How it flows (`Clicky.Core/Memory`, no Windows APIs):
 
 Until a Claude backend registers `IMemoryModel`, memory is read into prompts but not updated automatically.
 
+## Connectors (M16)
+
+Settings › Connectors lets Claude use other apps through MCP servers, with the official C# MCP SDK (`ModelContextProtocol.Core`, client only). A **local program** is started by Clicky and spoken to over stdin/stdout (`npx`, `uvx`, `docker`, a full path). A **remote server** is reached over streamable HTTP, falling back to the older HTTP+SSE transport. Paste an `mcpServers` block from a README, or import `%AppData%\Claude\claude_desktop_config.json`.
+
+- **Live.** Connectors live in `settings.connectors` and apply as soon as you save, hand edits included. Each enabled account is its own connection. A connection starts in the background at launch, lists its tools, follows `tools/list_changed`, and comes back on its own when the process exits or the network drops, after 1, 2, 5, 10, 30, then every 60 s. A server that never connects (wrong command) stops after 3 tries and shows why, with the last lines of its stderr. Retry tries again.
+- **Tools for Claude.** `IConnectorTools` (Core) gives the backends and agent loop the tools of everything connected, named `<connector>__<tool>` (`<connector>-<account>__<tool>` when several accounts are on), always valid Messages API names of up to 64 characters. Each tool carries its JSON schema and the server's read-only/destructive hints. `NeedsConfirmation` is true for anything not declared read-only, and the permission gate runs on it. Calls never throw for a server problem; they come back as error results Claude can read. Results over 100,000 characters are cut. Tools can be switched off one by one.
+- **Secrets.** API keys, secret environment values (`GITHUB_PERSONAL_ACCESS_TOKEN`, …) and OAuth tokens go into Credential Manager as `Clicky/mcp/<connector>/<account>/…`, never into settings.json. An imported server's `env` values are treated as secrets. One credential holds 1,280 characters and OAuth tokens are often longer, so values are split across `…#2`, `…#3` entries. Removing a connector or account deletes its entries.
+- **OAuth.** MCP authorization: discovery from the server's 401 (protected-resource and authorization-server metadata), dynamic client registration, PKCE, and the RFC 8252 loopback redirect `http://127.0.0.1:<port>/callback` on a plain socket (no http.sys URL reservation, no firewall prompt). Background connects never open a browser. A server that needs a sign-in waits with a Sign in button, which opens the default browser and finishes when it redirects back (5-minute limit). Refresh tokens survive restarts, so you sign in once per account. Only `https:` authorization pages, or `http:` on loopback, are ever opened. For servers without dynamic registration, Advanced sign-in takes a client id and secret and a fixed redirect port.
+- **Accounts.** A connector with credentials can have several accounts (Work, Personal), each with its own keys or sign-in. Tool descriptions say which account they act on.
+- **Windows.** `npx` and other `.cmd` shims run through `cmd.exe` (the SDK does that). PATH is refreshed from the registry for each server, so Node or Python installed after Clicky started is found. Stdio servers get your profile folder as their working directory unless one is set. They are stopped (whole process tree) when Clicky quits; one Clicky crash can leave them running until they notice stdin closed.
+- **Testing without Node.** `tests/Clicky.TestMcpServer` is a small stdio server (`echo`, `add`, `env`, `crash`, `grow`): command `dotnet`, arguments `<path>\Clicky.TestMcpServer.dll`.
+
 ## Install, updates and bug reports (M18)
 
 **Install.** `Clicky-win-Setup.exe` (Velopack) installs per user to `%LocalAppData%\ClickyApp` with no admin prompt and no .NET install (the build is self-contained, about 92 MB), adds Start menu and desktop shortcuts and an Apps & features entry, and starts Clicky. The pack id is `ClickyApp`, not `Clicky`, because Setup empties its install folder and `%LocalAppData%\Clicky` holds the speech models. The pack id must never change, or installed copies stop updating. The installer is not code-signed yet, so SmartScreen warns on first run.
 
-**Updates.** A minute after startup and then every 6 hours the installed app asks GitHub releases for a newer version and downloads it in the background (deltas when the previous release is on the feed). It never restarts on its own: the tray menu gets **Update to x.y.z and restart** (and a notification says so once), and Settings > Updates and support has the same button plus Check for updates. Clicking it hands over to Velopack's updater, Clicky exits normally, the updater swaps `current\` and starts the new version. An update left waiting installs at the next start anyway. A development build (run from `bin\`) shows its version and skips all of this. Velopack's own log is `%LocalAppData%elopackelopack_ClickyApp.log`.
+**Updates.** A minute after startup and then every 6 hours the installed app asks GitHub releases for a newer version and downloads it in the background (deltas when the previous release is on the feed). It never restarts on its own: the tray menu gets **Update to x.y.z and restart** (and a notification says so once), and Settings > Updates and support has the same button plus Check for updates. Clicking it hands over to Velopack's updater, Clicky exits normally, the updater swaps `current\` and starts the new version. An update left waiting installs at the next start anyway. A development build (run from `bin\`) shows its version and skips all of this. Velopack's own log is `%LocalAppData%\Velopack\velopack_ClickyApp.log`.
 
 **Start with Windows** points the Run entry at the stable stub `%LocalAppData%\ClickyApp\Clicky.exe`, never at `current\`, so it survives updates. Uninstall removes the Run entry. Uninstall keeps settings, memory and speech models (`%AppData%\Clicky`, `%LocalAppData%\Clicky`); delete those folders to remove everything.
 

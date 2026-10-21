@@ -33,9 +33,12 @@ public sealed record ClickySettings
 
     public SpeechSettings Speech { get; init; } = new();
 
+    public ClaudeSettings Claude { get; init; } = new();
+
     public MemorySettings Memory { get; init; } = new();
 
     public UpdateSettings Updates { get; init; } = new();
+    public ConnectorSettings Connectors { get; init; } = new();
 
     public DebugSettings Debug { get; init; } = new();
 
@@ -52,8 +55,10 @@ public sealed record ClickySettings
         Capture = (Capture ?? new()).Normalize(),
         Voice = (Voice ?? new()).Normalize(),
         Speech = (Speech ?? new()).Normalize(),
+        Claude = (Claude ?? new()).Normalize(),
         Memory = (Memory ?? new()).Normalize(),
         Updates = (Updates ?? new()).Normalize(),
+        Connectors = (Connectors ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }

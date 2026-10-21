@@ -19,6 +19,8 @@ public sealed class OverlayHost : IDisposable
 
     private OverlayWindow[] _overlays = [];
     private bool _visible;
+    private bool _shown;
+    private int _keepVisibleCount;
     private bool _disposed;
 
     public OverlayHost(Dispatcher dispatcher, ILogger<OverlayHost> logger)
@@ -42,28 +44,32 @@ public sealed class OverlayHost : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _dispatcher.VerifyAccess();
-        _visible = true;
-
-        if (_overlays.Length == 0)
-        {
-            Rebuild(DisplayMonitors.GetAll());
-            return;
-        }
-
-        foreach (var overlay in _overlays.Where(o => !o.IsClosed))
-        {
-            overlay.Show();
-        }
+        _shown = true;
+        ApplyVisibility();
     }
 
+    /// <summary>Hides the overlays, unless something holds <see cref="KeepVisible"/>.</summary>
     public void Hide()
     {
         _dispatcher.VerifyAccess();
-        _visible = false;
-        foreach (var overlay in _overlays.Where(o => !o.IsClosed))
+        _shown = false;
+        ApplyVisibility();
+    }
+
+    /// <summary>
+    /// Keeps the overlays on screen until the returned lease is disposed, whatever Show and Hide say,
+    /// so marks drawn on them stay visible while the floating buddy is hidden. UI thread only.
+    /// </summary>
+    public IDisposable KeepVisible()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _dispatcher.VerifyAccess();
+        if (_keepVisibleCount++ == 0 && !_shown)
         {
-            overlay.Hide();
+            ApplyVisibility();
         }
+
+        return new VisibilityLease(this);
     }
 
     public void ReassertTopmost()
@@ -92,6 +98,31 @@ public sealed class OverlayHost : IDisposable
         _watcher.Changed -= OnDisplaysChanged;
         _watcher.Dispose();
         CloseAll();
+    }
+
+    private void ApplyVisibility()
+    {
+        _visible = _shown || _keepVisibleCount > 0;
+        if (!_visible)
+        {
+            foreach (var overlay in _overlays.Where(o => !o.IsClosed))
+            {
+                overlay.Hide();
+            }
+
+            return;
+        }
+
+        if (_overlays.Length == 0)
+        {
+            Rebuild(DisplayMonitors.GetAll());
+            return;
+        }
+
+        foreach (var overlay in _overlays.Where(o => !o.IsClosed))
+        {
+            overlay.Show();
+        }
     }
 
     private void OnDisplaysChanged(object? sender, EventArgs e)
@@ -152,5 +183,25 @@ public sealed class OverlayHost : IDisposable
         }
 
         _overlays = [];
+    }
+
+    private sealed class VisibilityLease(OverlayHost host) : IDisposable
+    {
+        private OverlayHost? _host = host;
+
+        public void Dispose()
+        {
+            var host = Interlocked.Exchange(ref _host, null);
+            if (host is null || host._disposed || host._dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+
+            host._dispatcher.VerifyAccess();
+            if (--host._keepVisibleCount == 0 && !host._shown)
+            {
+                host.ApplyVisibility();
+            }
+        }
     }
 }
