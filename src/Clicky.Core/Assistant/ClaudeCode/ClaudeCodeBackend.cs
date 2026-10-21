@@ -242,7 +242,15 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         }
     }
 
-    public async Task<string> CompleteAsync(string system, string user, string model, CancellationToken cancellationToken = default)
+    public Task<string> CompleteAsync(string system, string user, string model, CancellationToken cancellationToken = default) =>
+        CompleteAsync(system, user, model, tools: string.Empty, cancellationToken);
+
+    /// <summary>
+    /// <see cref="CompleteAsync(string, string, string, CancellationToken)"/> with some of Claude
+    /// Code's built-in tools allowed, e.g. "WebSearch" for the suggestions research (M17).
+    /// </summary>
+    /// <param name="tools">Comma-separated built-in tool names; empty for none.</param>
+    public async Task<string> CompleteAsync(string system, string user, string model, string tools, CancellationToken cancellationToken = default)
     {
         // A one-off process of its own, so it never waits behind (or disturbs) a spoken reply.
         var executable = ClaudeCliLocator.Find(_settings.Current.Claude.CliPath)
@@ -253,6 +261,11 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         arguments[promptAt] = "--system-prompt";
         arguments[promptAt + 1] = system;
         arguments.Remove("--include-partial-messages");
+        if (!string.IsNullOrEmpty(tools))
+        {
+            arguments[arguments.IndexOf("--tools") + 1] = tools;
+            arguments.AddRange(["--allowedTools", tools]);
+        }
 
         IClaudeCliProcess process;
         try
