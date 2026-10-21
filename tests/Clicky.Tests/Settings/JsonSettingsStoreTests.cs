@@ -167,16 +167,27 @@ public sealed class JsonSettingsStoreTests : IDisposable
     [Fact]
     public async Task Burst_of_external_writes_is_debounced_to_one_reload_with_the_final_value()
     {
-        var store = Open();
+        // A long debounce and a synchronous burst: the test only fails if this thread stalls for half
+        // a second between two writes. Async 10 ms gaps against 150 ms needed a thread-pool thread
+        // for every gap, and a busy test run sometimes took longer than the debounce to supply one.
+        var debounce = TimeSpan.FromMilliseconds(500);
+        var store = Open(debounce);
         var events = Record(store);
 
         foreach (var level in new[] { "Verbose", "Debug", "Information", "Warning", "Error" })
         {
             File.WriteAllText(SettingsPath, $$"""{ "logging": { "minimumLevel": "{{level}}" } }""");
-            await Task.Delay(10);
+            Thread.Sleep(10);
         }
 
-        await Task.Delay(Debounce * 4);
+        // Wait for the reload rather than a fixed time (it also needs a pool thread), then for any second one.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (events.IsEmpty && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        await Task.Delay(debounce * 2);
 
         var e = Assert.Single(events);
         Assert.Equal(LogLevelSetting.Error, e.Current.Logging.MinimumLevel);
@@ -222,12 +233,12 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.True((await changed.WaitAsync(ReloadDeadline)).Current.General.StartWithWindows);
     }
 
-    private JsonSettingsStore Open()
+    private JsonSettingsStore Open(TimeSpan? debounce = null)
     {
         var store = JsonSettingsStore.Open(
             SettingsPath,
             NullLogger<JsonSettingsStore>.Instance,
-            new SettingsStoreOptions { ReloadDebounce = Debounce });
+            new SettingsStoreOptions { ReloadDebounce = debounce ?? Debounce });
         _stores.Add(store);
         return store;
     }
