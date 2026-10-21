@@ -149,7 +149,7 @@ public sealed class SpeechServiceTests : IDisposable
         Assert.Equal("en", voice.Language);
         Assert.Equal(WhisperModels.DefaultGpu, voice.LocalModel);
         Assert.True(voice.UseGpu);
-        Assert.Equal(300, voice.MinSpeechMs);
+        Assert.Equal(200, voice.MinSpeechMs);
         Assert.False(ClickySettings.Default.Debug.SaveAudio);
 
         var repaired = new VoiceSettings((SpeechEngine)42, " HI ", "", null!, true, " ", null!, -5, 100_000).Normalize();

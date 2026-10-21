@@ -35,6 +35,9 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
     private const int FullAudioContext = 1500;
     private const int MinAudioContext = 256;
 
+    // A GPU used this recently is still clocked up.
+    private const long GpuAwakeMs = 2000;
+
     private static readonly Lock RuntimeLock = new();
     private static readonly List<VulkanDevice> s_vulkanDevices = [];
     private static bool s_runtimeChosen;
@@ -51,6 +54,7 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
     private WhisperModel? _model;
     private bool _onGpu;
     private ModelDownloadProgress? _download;
+    private long _lastRun;
     private bool _disposed;
 
     public WhisperSpeechToText(ModelDownloader downloader, ISettingsStore settings, ILogger<WhisperSpeechToText> logger)
@@ -97,6 +101,7 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
                     detected ??= segment.Language;
                 }
 
+                Volatile.Write(ref _lastRun, Environment.TickCount64);
                 return new Transcript(string.Join(' ', parts.Where(p => p.Length > 0)), detected ?? effectiveLanguage, Description, stopwatch.Elapsed);
             }
             finally
@@ -136,6 +141,55 @@ public sealed partial class WhisperSpeechToText : ISpeechToText, IDisposable
         {
             _logger.LogWarning(ex, "Local speech-to-text is not ready");
         }
+    }
+
+    /// <summary>
+    /// An idle laptop GPU clocks down (or, with Optimus, powers off), and the first run after a few
+    /// seconds of idle takes about 1-1.7 s instead of 0.55 s. Talking takes longer than that, so a
+    /// throwaway run on silence when the user starts talking has the GPU awake by the time they
+    /// let go.
+    /// </summary>
+    public void Prepare()
+    {
+        if (_disposed || !_onGpu || _factory is null || _download is not null
+            || Environment.TickCount64 - Volatile.Read(ref _lastRun) < GpuAwakeMs)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            // If a real request holds the GPU, it is awake already.
+            if (!await _gate.WaitAsync(0).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            try
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var processor = ProcessorFor(_settings.Current.Voice.Language, MinimumSamples, out _, out var reusable);
+                await foreach (var _ in processor.ProcessAsync(new float[MinimumSamples]).ConfigureAwait(false))
+                {
+                }
+
+                if (!reusable)
+                {
+                    await processor.DisposeAsync().ConfigureAwait(false);
+                }
+
+                Volatile.Write(ref _lastRun, Environment.TickCount64);
+                _logger.LogDebug("Woke the GPU in {Ms:0} ms", stopwatch.Elapsed.TotalMilliseconds);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                _logger.LogDebug(ex, "GPU wake-up run failed");
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        });
     }
 
     public void Dispose()

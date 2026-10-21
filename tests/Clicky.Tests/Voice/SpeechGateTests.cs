@@ -58,6 +58,15 @@ public sealed class SpeechGateTests
     }
 
     [Fact]
+    public void A_quiet_short_word_on_a_very_clean_mic_counts()
+    {
+        // A mic array with noise suppression: room at -85 dBFS, a soft "yes" at -47 dBFS.
+        var analysis = SpeechDetector.Analyze(Concat(Noise(1, -85), Tone(0.4, -47), Noise(1, -85)));
+
+        Assert.True(analysis.HasSpeech(TimeSpan.FromMilliseconds(200)), analysis.ToString());
+    }
+
+    [Fact]
     public void A_click_is_too_short_to_count()
     {
         var analysis = SpeechDetector.Analyze(Concat(Noise(1, -60), Tone(0.06, -10), Noise(1, -60)));

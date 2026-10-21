@@ -33,6 +33,7 @@ public sealed class VoiceInputTests : IDisposable
         Assert.Equal("Where is the export button?", result.Text);
         Assert.Equal(TimeSpan.FromSeconds(2.5), result.Recorded);
         Assert.Equal("en", _stt.Language);
+        Assert.Equal(1, _stt.Prepared);
 
         // 1 s of speech plus 250 ms either side.
         Assert.Equal(24_000, _stt.Samples);
@@ -260,6 +261,10 @@ public sealed class VoiceInputTests : IDisposable
             return Task.FromResult(new Transcript(Reply, language, "Fake", TimeSpan.FromMilliseconds(5)));
         }
 
+        public int Prepared { get; private set; }
+
         public Task WarmUpAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public void Prepare() => Prepared++;
     }
 }

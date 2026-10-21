@@ -87,6 +87,11 @@ public sealed class OpenAiSpeechToText(HttpClient http, ISecretStore secrets, IS
         return Task.CompletedTask;
     }
 
+    /// <summary>Nothing to wake: HttpClient keeps the connection from the last request alive.</summary>
+    public void Prepare()
+    {
+    }
+
     internal static string DescribeFailure(HttpStatusCode status, string body)
     {
         var message = TryReadErrorMessage(body);
