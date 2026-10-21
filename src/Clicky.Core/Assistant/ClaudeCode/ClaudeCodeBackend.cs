@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Clicky.Core.Actions;
+using Clicky.Core.Connectors;
 using Clicky.Core.Prompts;
 using Clicky.Core.Settings;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,8 @@ namespace Clicky.Core.Assistant.ClaudeCode;
 /// Asks Claude through Claude Code run headless (<c>claude -p</c>) on the user's subscription, so
 /// there is no API bill. Claude Code takes no custom tools, so the model writes actions as inline
 /// &lt;action&gt; tags that go through the same schema validation as the API backend's tools.
+/// Connected apps' tools (M16) are listed in the conversation and called with use_tool tags, which
+/// the agent loop runs behind the permission gate.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,28 +41,42 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
     /// <summary>After an interrupt, how long to wait for Claude Code to wrap up before killing it.</summary>
     public static readonly TimeSpan InterruptGrace = TimeSpan.FromSeconds(3);
 
+    /// <summary>The connector tool list is capped so a server with huge schemas can't crowd out the conversation.</summary>
+    internal const int MaxCatalogChars = 40_000;
+
+    internal const int MaxSchemaChars = 2_000;
+
     private static readonly string[] s_removeEnvironment = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"];
+
+    private static readonly TimeSpan s_connectorWait = TimeSpan.FromSeconds(1.5);
 
     private readonly ISettingsStore _settings;
     private readonly string _directory;
     private readonly ILogger<ClaudeCodeBackend> _logger;
     private readonly Func<ClaudeCliStartInfo, IClaudeCliProcess> _start;
+    private readonly IConnectorTools? _connectors;
     private readonly SemaphoreSlim _turn = new(1, 1);
     private readonly Lock _gate = new();
     private readonly Timer _idle;
     private ClaudeCliSession? _session;
 
-    public ClaudeCodeBackend(ISettingsStore settings, ClickyPaths paths, ILogger<ClaudeCodeBackend> logger)
-        : this(settings, paths.ClaudeCodeDirectory, logger, ClaudeCliProcess.Start)
+    public ClaudeCodeBackend(ISettingsStore settings, ClickyPaths paths, ILogger<ClaudeCodeBackend> logger, IConnectorTools? connectors = null)
+        : this(settings, paths.ClaudeCodeDirectory, logger, ClaudeCliProcess.Start, connectors)
     {
     }
 
-    internal ClaudeCodeBackend(ISettingsStore settings, string directory, ILogger<ClaudeCodeBackend> logger, Func<ClaudeCliStartInfo, IClaudeCliProcess> start)
+    internal ClaudeCodeBackend(
+        ISettingsStore settings,
+        string directory,
+        ILogger<ClaudeCodeBackend> logger,
+        Func<ClaudeCliStartInfo, IClaudeCliProcess> start,
+        IConnectorTools? connectors = null)
     {
         _settings = settings;
         _directory = directory;
         _logger = logger;
         _start = start;
+        _connectors = connectors;
         _idle = new Timer(_ => CloseIfIdle());
     }
 
@@ -109,7 +126,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         _ = effort;
         await _turn.WaitAsync(cancellationToken).ConfigureAwait(false);
         var limits = new HistoryLimits(_settings.Current.Claude.MaxTurns);
-        var userText = PromptLibrary.UserText(request);
+        var userText = PromptLibrary.UserText(request, ActionDelivery.Tags);
         var reply = new TurnState(request.Screenshot);
         var stopwatch = Stopwatch.StartNew();
         ClaudeCliSession? session = null;
@@ -127,7 +144,8 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
                     session.Model = model;
                 }
 
-                await session.SendUserAsync(UserContent(conversation, session, request, userText), stall.Token).ConfigureAwait(false);
+                IReadOnlyList<ConnectorTool> tools = _connectors is null ? [] : await _connectors.GetToolsAsync(s_connectorWait, stall.Token).ConfigureAwait(false);
+                await session.SendUserAsync(UserContent(conversation, session, request, userText, tools), stall.Token).ConfigureAwait(false);
                 session.TurnsSeen = conversation.Turns.Count + 1;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -354,7 +372,50 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         return text.Append("\n(End of earlier conversation.)").ToString();
     }
 
-    private static JsonArray UserContent(Conversation conversation, ClaudeCliSession session, ClaudeRequest request, string userText)
+    /// <summary>
+    /// The connected apps' tools as text for the model, and a key that changes when they do. Null
+    /// text with a null key: nothing to say (no tools now, none shown before).
+    /// </summary>
+    internal static (string? Text, string? Key) ToolCatalog(IReadOnlyList<ConnectorTool> tools, string? shownKey)
+    {
+        if (tools.Count == 0)
+        {
+            return shownKey is null ? (null, null) : ("[No connected app tools are available any more.]", string.Empty);
+        }
+
+        var ordered = tools.OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+        var key = string.Join('\n', ordered.Select(t => $"{t.Name}\u0001{t.Description}\u0001{t.InputSchema.GetRawText()}"));
+        if (key == shownKey)
+        {
+            return (null, key);
+        }
+
+        var text = new StringBuilder(
+            "[Connected app tools you can call. Write <action>{\"type\":\"use_tool\",\"name\":\"<tool name>\",\"input\":{...}}</action> " +
+            "with input matching the tool's schema. Clicky runs it (asking the user first when it can change anything) and sends you the result. " +
+            "These replace any tool list shown earlier.\n");
+        foreach (var tool in ordered)
+        {
+            var schema = tool.InputSchema.GetRawText();
+            if (schema.Length > MaxSchemaChars)
+            {
+                schema = schema[..MaxSchemaChars] + "…(schema cut short)";
+            }
+
+            var line = $"- {tool.Name}{(tool.ReadOnly ? " (read-only)" : string.Empty)}: {tool.Description.ReplaceLineEndings(" ").Trim()} Input schema: {schema}\n";
+            if (text.Length + line.Length > MaxCatalogChars)
+            {
+                text.Append("- (more tools left out: the list is too long)\n");
+                break;
+            }
+
+            text.Append(line);
+        }
+
+        return (text.Append(']').ToString(), key);
+    }
+
+    private static JsonArray UserContent(Conversation conversation, ClaudeCliSession session, ClaudeRequest request, string userText, IReadOnlyList<ConnectorTool> tools)
     {
         var content = new JsonArray();
         var turns = conversation.Turns;
@@ -364,6 +425,14 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
         {
             content.Add(new JsonObject { ["type"] = "text", ["text"] = memory });
         }
+
+        var (catalog, key) = ToolCatalog(tools, session.ToolCatalogKey);
+        if (catalog is not null)
+        {
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = catalog });
+        }
+
+        session.ToolCatalogKey = key;
 
         if (session.TurnsSeen < turns.Count)
         {
@@ -623,7 +692,7 @@ public sealed class ClaudeCodeBackend : IClaudeBackend, IDisposable
             {
                 "max_tokens" => ReplyStop.MaxTokens,
                 "refusal" => ReplyStop.Refused,
-                _ => _actions.Any(a => a.ControlsComputer || a is AskPermissionAction) ? ReplyStop.Actions : ReplyStop.EndTurn,
+                _ => _actions.Any(a => a.NeedsResult) ? ReplyStop.Actions : ReplyStop.EndTurn,
             };
             return new ReplyCompleted(stop, [.. _actions], usage, _firstText, elapsed, _model ?? requestedModel);
         }

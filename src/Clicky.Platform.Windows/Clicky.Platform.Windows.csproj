@@ -19,12 +19,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="FlaUI.UIA3" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="NAudio.Wasapi" />
     <PackageReference Include="Whisper.net" />
     <PackageReference Include="Whisper.net.Runtime" />
     <PackageReference Include="Whisper.net.Runtime.Vulkan" />
-    <PackageReference Include="FlaUI.UIA3" />
   </ItemGroup>
 
 </Project>

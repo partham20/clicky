@@ -40,6 +40,9 @@ internal sealed class ClaudeCliSession : IDisposable
     /// <summary>Turns of the conversation this process has seen (as a seed transcript or live).</summary>
     public int TurnsSeen { get; set; }
 
+    /// <summary>The connector tool list this process was last shown (see ClaudeCodeBackend), or null for none yet.</summary>
+    public string? ToolCatalogKey { get; set; }
+
     /// <summary>Completes when initialize was acknowledged; faults if the process failed first.</summary>
     public Task? Ready { get; set; }
 

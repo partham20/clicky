@@ -34,7 +34,7 @@ public sealed class AnthropicApiBackendTests
         Assert.Equal("ephemeral", root.GetProperty("system")[0].GetProperty("cache_control").GetProperty("type").GetString());
 
         var tools = root.GetProperty("tools").EnumerateArray().ToList();
-        Assert.Equal(11, tools.Count); // Every action except say.
+        Assert.Equal(12, tools.Count); // Every action except say and use_tool (connector tools are real tools here).
         Assert.All(tools, t => Assert.True(t.GetProperty("strict").GetBoolean()));
 
         var messages = root.GetProperty("messages").EnumerateArray().ToList();
