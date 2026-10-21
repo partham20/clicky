@@ -36,8 +36,7 @@ internal static class RoutineServices
         // For chat and agent loops: "do this every morning" becomes create_routine.
         services.AddSingleton(sp => new RoutineTools(sp.GetRequiredService<RoutineEngine>()));
 
-        services.AddTransient<RoutinesSettingsView>();
-        services.AddSingleton<Func<RoutinesSettingsView>>(sp => sp.GetRequiredService<RoutinesSettingsView>);
+        services.AddSettingsSection<RoutinesSettingsView>(SettingsPages.Agents, order: 20);
         services.AddHostedService<RoutineStartup>();
         return services;
     }
