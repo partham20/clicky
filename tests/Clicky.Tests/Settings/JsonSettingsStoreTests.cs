@@ -94,6 +94,19 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void M0_file_without_overlay_section_gets_overlay_defaults()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(SettingsPath, """{ "schemaVersion": 1, "general": { "startWithWindows": true }, "overlay": null }""");
+
+        var store = Open();
+
+        Assert.Equal(new OverlaySettings(), store.Current.Overlay);
+        Assert.False(store.Current.Overlay.HideFloatingCursor);
+        Assert.Equal(40, store.Current.Overlay.FollowSmoothingMs);
+    }
+
+    [Fact]
     public async Task External_edit_is_applied_within_deadline()
     {
         var store = Open();

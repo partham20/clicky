@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using Clicky.App.Buddy;
 using Clicky.App.Views;
 using Clicky.Core;
 using Microsoft.Extensions.Hosting;
@@ -16,13 +17,13 @@ public interface IAppShell
     void Quit();
 }
 
-internal sealed class AppShell(ClickyPaths paths, IHostApplicationLifetime lifetime) : IAppShell
+internal sealed class AppShell(ClickyPaths paths, IHostApplicationLifetime lifetime, Func<DockedBuddyView> dockedBuddy) : IAppShell
 {
     private PlaceholderWindow? _home;
     private PlaceholderWindow? _settings;
 
     public void ShowHome() =>
-        _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14."));
+        _home = Activate(_home, () => new PlaceholderWindow("Clicky Home", "The Home window arrives in M14.", extra: dockedBuddy()));
 
     public void ShowSettings() =>
         _settings = Activate(_settings, () => new PlaceholderWindow(

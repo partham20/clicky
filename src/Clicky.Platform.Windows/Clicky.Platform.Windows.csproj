@@ -5,7 +5,14 @@
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <RootNamespace>Clicky.Platform.Windows</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Overlay windows are WPF so M7 can draw on them with the same visual tree as the buddy. -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF's implicit usings leave out System.IO (Path clashes with System.Windows.Shapes.Path). -->
+    <Using Include="System.IO" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Clicky.Core\Clicky.Core.csproj" />

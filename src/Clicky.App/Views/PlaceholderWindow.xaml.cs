@@ -7,13 +7,18 @@ public partial class PlaceholderWindow : Window
 {
     private readonly Action? _action;
 
-    public PlaceholderWindow(string title, string body, string? actionText = null, Action? action = null)
+    public PlaceholderWindow(string title, string body, string? actionText = null, Action? action = null, UIElement? extra = null)
     {
         InitializeComponent();
         Title = title;
         Heading.Text = title;
         Body.Text = body;
         _action = action;
+        Extra.Content = extra;
+        if (extra is not null)
+        {
+            Height += 120;
+        }
 
         if (actionText is not null && action is not null)
         {

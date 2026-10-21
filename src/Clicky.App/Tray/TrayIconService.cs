@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
+using Clicky.Core.Buddy;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 
@@ -60,8 +61,40 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
         startWithWindows.SetBinding(MenuItem.IsCheckedProperty, new Binding(nameof(TrayViewModel.StartWithWindows)) { Mode = BindingMode.TwoWay });
         menu.Items.Add(startWithWindows);
 
+        var hideFloatingCursor = new MenuItem { Header = "Hide floating cursor", IsCheckable = true };
+        hideFloatingCursor.SetBinding(MenuItem.IsCheckedProperty, new Binding(nameof(TrayViewModel.HideFloatingCursor)) { Mode = BindingMode.TwoWay });
+        menu.Items.Add(hideFloatingCursor);
+
+        menu.Items.Add(BuildBuddyStatePreviewMenu());
+
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Quit Clicky", Command = viewModel.QuitCommand });
         return menu;
+    }
+
+    // Until the talk loop (M6) drives the buddy, this is the only way to see each state.
+    private MenuItem BuildBuddyStatePreviewMenu()
+    {
+        var parent = new MenuItem { Header = "Buddy state (preview)" };
+        foreach (var state in Enum.GetValues<BuddyState>())
+        {
+            parent.Items.Add(new MenuItem
+            {
+                Header = state.ToString(),
+                Command = viewModel.SetBuddyStateCommand,
+                CommandParameter = state,
+                Tag = state,
+            });
+        }
+
+        parent.SubmenuOpened += (_, _) =>
+        {
+            foreach (MenuItem item in parent.Items)
+            {
+                item.IsChecked = Equals(item.Tag, viewModel.BuddyState);
+            }
+        };
+
+        return parent;
     }
 }
