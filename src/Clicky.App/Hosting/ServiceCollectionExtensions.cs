@@ -208,6 +208,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<SuggestionEngine>();
         services.AddSingleton<SuggestionCoordinator>();
         services.AddSingleton<ITodaysIdeas>(sp => sp.GetRequiredService<SuggestionCoordinator>());
+
+        // Lazy for the tray menu: the coordinator's notifier needs the tray icon, so a direct one is a cycle.
+        services.AddSingleton(sp => new Lazy<ITodaysIdeas>(sp.GetRequiredService<ITodaysIdeas>));
         services.AddSingleton<HiddenBuddyCaption>();
 
         // M8 walkthroughs and app skills. The talk loop passes reply events to IWalkthroughs.Observe;

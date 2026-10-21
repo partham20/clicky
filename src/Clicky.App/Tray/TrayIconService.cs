@@ -13,7 +13,7 @@ using H.NotifyIcon.Core;
 namespace Clicky.App.Tray;
 
 /// <summary>Owns the notification-area icon. Create, show and dispose on the UI thread.</summary>
-public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo, InkTrailDemo inkTrailDemo, WalkthroughDemo walkthroughDemo, ITodaysIdeas suggestions) : IDisposable
+public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo annotationDemo, InkTrailDemo inkTrailDemo, WalkthroughDemo walkthroughDemo, Lazy<ITodaysIdeas> suggestions) : IDisposable
 {
     private TaskbarIcon? _icon;
 
@@ -72,7 +72,7 @@ public sealed class TrayIconService(TrayViewModel viewModel, AnnotationDemo anno
         menu.Items.Add(new MenuItem { Header = "Settings…", Command = viewModel.OpenSettingsCommand });
         menu.Items.Add(new MenuItem { Header = "New conversation", Command = viewModel.NewConversationCommand, ToolTip = "Clicky forgets what you talked about so far" });
         var ideas = new MenuItem { Header = "Today's ideas", ToolTip = "This morning's suggestions from your apps and the web" };
-        ideas.Click += (_, _) => suggestions.ShowToday();
+        ideas.Click += (_, _) => suggestions.Value.ShowToday();
         menu.Items.Add(ideas);
         menu.Items.Add(new Separator());
 
