@@ -32,11 +32,11 @@ public interface IRoutineProposer
 /// </remarks>
 public sealed class RoutineProposer : IRoutineProposer, IAsyncDisposable
 {
-    public const string CardTask = "Setting up a routine";
-    public const string SaveLabel = "Save routine";
+    public const string CardTask = RoutineConfirmer.CreateTask;
+    public const string SaveLabel = RoutineConfirmer.SaveLabel;
 
     private readonly RoutineEngine _engine;
-    private readonly IAgentPresenter _presenter;
+    private readonly RoutineConfirmer _confirmer;
     private readonly ILogger<RoutineProposer> _logger;
     private readonly TimeProvider _time;
     private readonly Func<TimeZoneInfo> _zone;
@@ -47,10 +47,10 @@ public sealed class RoutineProposer : IRoutineProposer, IAsyncDisposable
     public RoutineProposer(RoutineEngine engine, IAgentPresenter presenter, ILogger<RoutineProposer> logger, TimeProvider? time = null, Func<TimeZoneInfo>? zone = null)
     {
         _engine = engine;
-        _presenter = presenter;
         _logger = logger;
         _time = time ?? TimeProvider.System;
         _zone = zone ?? (() => TimeZoneInfo.Local);
+        _confirmer = new RoutineConfirmer(presenter, _time, _zone);
     }
 
     /// <summary>Raised after each proposal is answered (or fails), with what Claude is told.</summary>
@@ -113,7 +113,6 @@ public sealed class RoutineProposer : IRoutineProposer, IAsyncDisposable
         var token = _disposed.Token;
         var now = _time.GetUtcNow();
         var zone = _zone();
-        var culture = CultureInfo.CurrentCulture;
 
         RoutineSchedule schedule;
         try
@@ -131,40 +130,18 @@ public sealed class RoutineProposer : IRoutineProposer, IAsyncDisposable
             return Result(toolCallId, "Not saved: that time has already passed.", isError: true);
         }
 
-        var name = action.Title.Trim();
-        var prompt = action.Prompt.Trim();
-        var when = schedule.Describe(culture);
-        var nextText = next is { } at ? $" Next run {RoutineFormat.When(at, now, zone, culture)}." : string.Empty;
-        var question = new PermissionPrompt(
-            $"Save the routine “{name}”?",
-            $"{when}.{nextText}\nEach time: {prompt}",
-            PermissionKind.Routine,
-            Irreversible: false,
-            AllowLabel: SaveLabel);
-
-        using var card = _presenter.Begin(CardTask, near);
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token, card.StopRequested);
-        PermissionAnswer answer;
-        try
+        var draft = new RoutineDraft(action.Title.Trim(), action.Prompt.Trim(), schedule, ClickyId: null);
+        using var card = await _confirmer.ConfirmCreateAsync(draft, near, token).ConfigureAwait(false);
+        if (!card.Approved)
         {
-            card.ShowStep(0, $"{name}: {char.ToLower(when[0], culture)}{when[1..]}");
-            answer = await card.AskAsync(question, stop.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!token.IsCancellationRequested)
-        {
-            answer = PermissionAnswer.NotNow; // Stop on the card.
-        }
-
-        if (answer == PermissionAnswer.NotNow)
-        {
-            _logger.LogInformation("Routines: the user didn't save \"{Name}\"", name);
-            return Result(toolCallId, $"The user chose not to save the routine “{name}”. Nothing was set up.", isError: false);
+            _logger.LogInformation("Routines: the user didn't save \"{Name}\"", draft.Name);
+            return Result(toolCallId, $"The user chose not to save the routine \u201C{draft.Name}\u201D. Nothing was set up.", isError: false);
         }
 
         Routine routine;
         try
         {
-            routine = await _engine.CreateAsync(new RoutineDraft(name, prompt, schedule, ClickyId: null), token).ConfigureAwait(false);
+            routine = await _engine.CreateAsync(draft, token).ConfigureAwait(false);
         }
         catch (ArgumentException ex)
         {
@@ -172,8 +149,7 @@ public sealed class RoutineProposer : IRoutineProposer, IAsyncDisposable
             return Result(toolCallId, $"Not saved: {ex.Message}", isError: true);
         }
 
-        var saved = routine.NextDueAt is { } due ? $" Next run {RoutineFormat.When(due, _time.GetUtcNow(), zone, culture)}." : string.Empty;
-        card.Finish($"Saved “{routine.Name}”.{saved} It's in Settings › Agents.", success: true);
+        card.Finish(_confirmer.SavedMessage(routine), success: true);
         _logger.LogInformation("Routines: the user saved \"{Name}\" ({Schedule}) from a conversation", routine.Name, routine.Schedule.Describe(CultureInfo.InvariantCulture));
 
         var invariantNext = routine.NextDueAt is { } d ? $" Next run: {RoutineFormat.When(d, _time.GetUtcNow(), zone, CultureInfo.InvariantCulture)}." : string.Empty;

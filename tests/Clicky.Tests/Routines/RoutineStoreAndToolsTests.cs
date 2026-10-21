@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Clicky.Core.Routines;
 using Clicky.Core.Settings;
+using Clicky.Tests.Agent;
 using Microsoft.Extensions.Logging.Abstractions;
 using static Clicky.Tests.Routines.RoutineScheduleTests;
 
@@ -170,38 +171,117 @@ public class RoutineToolsTests
         Assert.Equal(new TimeOnly(9, 0), schedule.At);
     }
 
+    private static readonly RoutineToolContext Desk = new("pdf-desk", Attended: true);
+
     [Fact]
     public async Task Create_list_pause_run_and_delete_by_conversation()
     {
         await using var h = new EngineHarness(Monday7);
         await h.StartAsync();
-        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc);
+        var presenter = new FakePresenter();
+        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc, new RoutineConfirmer(presenter, h.Time, () => TestZones.Utc));
 
         var created = await tools.CallAsync(RoutineTools.Create, Json("""
             { "name": "Morning briefing", "prompt": "Brief me on my calendar.", "schedule": { "kind": "weekdays", "time": "08:00" } }
-            """), clickyId: "pdf-desk");
+            """), Desk);
         Assert.False(created.IsError, created.Text);
-        Assert.StartsWith("Created routine \"Morning briefing\"", created.Text, StringComparison.Ordinal);
+        Assert.StartsWith("The user saved the routine \"Morning briefing\"", created.Text, StringComparison.Ordinal);
         Assert.Contains("Next run: today 08:00", created.Text, StringComparison.Ordinal);
         var routine = Assert.Single(h.Engine.Routines);
         Assert.Equal("pdf-desk", routine.ClickyId);
         Assert.Equal(RoutineDays.Weekdays, routine.Schedule.Days);
+        Assert.Equal(RoutineConfirmer.SaveLabel, Assert.Single(presenter.Cards[0].Prompts).AllowLabel);
+        Assert.True(presenter.Cards[0].Finished!.Value.Success);
 
-        var list = await tools.CallAsync(RoutineTools.List, Json("{}"));
+        var list = await tools.CallAsync(RoutineTools.List, Json("{}"), Desk);
         Assert.Contains("\"Morning briefing\"", list.Text, StringComparison.Ordinal);
         Assert.Contains("Does: Brief me on my calendar.", list.Text, StringComparison.Ordinal);
 
-        var paused = await tools.CallAsync(RoutineTools.Pause, Json("""{ "routine": "morning briefing", "paused": true }"""));
+        var paused = await tools.CallAsync(RoutineTools.Pause, Json("""{ "routine": "morning briefing", "paused": true }"""), Desk);
         Assert.False(paused.IsError, paused.Text);
         Assert.False(h.Get(routine.Id).Enabled);
 
-        var ran = await tools.CallAsync(RoutineTools.RunNow, Json($$"""{ "routine": "{{routine.Id}}" }"""));
+        var ran = await tools.CallAsync(RoutineTools.RunNow, Json($$"""{ "routine": "{{routine.Id}}" }"""), Desk);
         Assert.False(ran.IsError, ran.Text);
         await EngineHarness.WaitUntil(() => h.Runner.Calls.Count == 1, "the run");
 
-        var deleted = await tools.CallAsync(RoutineTools.Delete, Json("""{ "routine": "Morning briefing" }"""));
+        var deleted = await tools.CallAsync(RoutineTools.Delete, Json("""{ "routine": "Morning briefing" }"""), Desk);
         Assert.False(deleted.IsError, deleted.Text);
         Assert.Empty(h.Engine.Routines);
+        var deletePrompt = Assert.Single(presenter.Cards[1].Prompts);
+        Assert.True(deletePrompt.Irreversible);
+        Assert.False(deletePrompt.OffersAlways);
+        Assert.Equal(RoutineConfirmer.DeleteLabel, deletePrompt.AllowLabel);
+    }
+
+    [Fact]
+    public async Task Not_now_saves_or_deletes_nothing()
+    {
+        await using var h = new EngineHarness(Monday7);
+        await h.StartAsync();
+        var presenter = new FakePresenter
+        {
+            NewCard = () =>
+            {
+                var card = new FakeCard();
+                card.Answers.Enqueue(Clicky.Core.Agent.PermissionAnswer.NotNow);
+                return card;
+            },
+        };
+        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc, new RoutineConfirmer(presenter, h.Time, () => TestZones.Utc));
+        var kept = await h.Engine.CreateAsync(new RoutineDraft("Inbox", "Check my inbox.", RoutineSchedule.Daily(new TimeOnly(9, 0)), "pdf-desk"));
+
+        var create = await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "prompt": "y", "schedule": { "kind": "startup" } }"""), Desk);
+        var delete = await tools.CallAsync(RoutineTools.Delete, Json("""{ "routine": "Inbox" }"""), Desk);
+
+        Assert.False(create.IsError);
+        Assert.Contains("chose not to save", create.Text, StringComparison.Ordinal);
+        Assert.Contains("chose to keep", delete.Text, StringComparison.Ordinal);
+        Assert.Equal([kept.Id], h.Engine.Routines.Select(r => r.Id));
+        Assert.All(presenter.Cards, c => Assert.True(c.Disposed));
+    }
+
+    [Fact]
+    public async Task Unattended_calls_can_only_list_and_pause()
+    {
+        await using var h = new EngineHarness(Monday7);
+        await h.StartAsync();
+        var presenter = new FakePresenter();
+        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc, new RoutineConfirmer(presenter, h.Time, () => TestZones.Utc));
+        var routine = await h.Engine.CreateAsync(new RoutineDraft("Inbox", "Check my inbox.", RoutineSchedule.Daily(new TimeOnly(9, 0)), "pdf-desk"));
+        var unattended = Desk with { Attended = false };
+
+        Assert.True((await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "prompt": "y", "schedule": { "kind": "startup" } }"""), unattended)).IsError);
+        Assert.True((await tools.CallAsync(RoutineTools.Delete, Json("""{ "routine": "Inbox" }"""), unattended)).IsError);
+        Assert.True((await tools.CallAsync(RoutineTools.RunNow, Json("""{ "routine": "Inbox" }"""), unattended)).IsError);
+        Assert.False((await tools.CallAsync(RoutineTools.List, Json("{}"), unattended)).IsError);
+        Assert.False((await tools.CallAsync(RoutineTools.Pause, Json("""{ "routine": "Inbox", "paused": true }"""), unattended)).IsError);
+
+        Assert.Empty(presenter.Cards);
+        Assert.Equal([routine.Id], h.Engine.Routines.Select(r => r.Id));
+        Assert.Empty(h.Runner.Calls);
+        Assert.Equal([RoutineTools.List, RoutineTools.Pause], RoutineTools.For(attended: false).Select(t => t.Name));
+        Assert.Equal(5, RoutineTools.For(attended: true).Count);
+    }
+
+    [Fact]
+    public async Task A_clicky_sees_and_changes_only_its_own_routines()
+    {
+        await using var h = new EngineHarness(Monday7);
+        await h.StartAsync();
+        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc, new RoutineConfirmer(new FakePresenter(), h.Time, () => TestZones.Utc));
+        var theirs = await h.Engine.CreateAsync(new RoutineDraft("Inbox", "Check my inbox.", RoutineSchedule.Daily(new TimeOnly(9, 0)), "mail-desk"));
+        await h.Engine.CreateAsync(new RoutineDraft("Digest", "Summarise PDFs.", RoutineSchedule.Daily(new TimeOnly(9, 0)), "pdf-desk"));
+
+        var list = await tools.CallAsync(RoutineTools.List, Json("{}"), Desk);
+        var byId = await tools.CallAsync(RoutineTools.Delete, Json($$"""{ "routine": "{{theirs.Id}}" }"""), Desk);
+        var everything = await tools.CallAsync(RoutineTools.List, Json("{}"), new RoutineToolContext(null, Attended: true));
+
+        Assert.Contains("Digest", list.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Inbox", list.Text, StringComparison.Ordinal);
+        Assert.True(byId.IsError);
+        Assert.NotNull(h.Engine.Find(theirs.Id));
+        Assert.Contains("Inbox", everything.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -209,15 +289,18 @@ public class RoutineToolsTests
     {
         await using var h = new EngineHarness(Monday7);
         await h.StartAsync();
-        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc);
+        var tools = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc, new RoutineConfirmer(new FakePresenter(), h.Time, () => TestZones.Utc));
+        var noConfirmer = new RoutineTools(h.Engine, h.Time, () => TestZones.Utc);
 
-        Assert.True((await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "schedule": { "kind": "startup" } }"""))).IsError);
+        Assert.True((await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "schedule": { "kind": "startup" } }"""), Desk)).IsError);
         Assert.Equal(
             "That time has already passed.",
-            (await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "prompt": "y", "schedule": { "kind": "once", "date": "2025-01-01", "time": "08:00" } }"""))).Text);
-        Assert.StartsWith("No routine called", (await tools.CallAsync(RoutineTools.Pause, Json("""{ "routine": "nope", "paused": true }"""))).Text, StringComparison.Ordinal);
-        Assert.True((await tools.CallAsync("bogus", Json("{}"))).IsError);
-        Assert.Equal("No routines yet.", (await tools.CallAsync(RoutineTools.List, Json("{}"))).Text);
+            (await tools.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "prompt": "y", "schedule": { "kind": "once", "date": "2025-01-01", "time": "08:00" } }"""), Desk)).Text);
+        Assert.StartsWith("No routine called", (await tools.CallAsync(RoutineTools.Pause, Json("""{ "routine": "nope", "paused": true }"""), Desk)).Text, StringComparison.Ordinal);
+        Assert.True((await tools.CallAsync("bogus", Json("{}"), Desk)).IsError);
+        Assert.Equal("No routines yet.", (await tools.CallAsync(RoutineTools.List, Json("{}"), Desk)).Text);
+        Assert.True((await noConfirmer.CallAsync(RoutineTools.Create, Json("""{ "name": "x", "prompt": "y", "schedule": { "kind": "startup" } }"""), Desk)).IsError);
+        Assert.Empty(h.Engine.Routines);
     }
 }
 

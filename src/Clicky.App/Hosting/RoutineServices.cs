@@ -34,8 +34,11 @@ internal static class RoutineServices
             sp.GetRequiredService<ILogger<RoutineEngine>>(),
             quiet: sp.GetService<IQuietDetector>()));
 
-        // For chat and agent loops: "do this every morning" becomes create_routine.
-        services.AddSingleton(sp => new RoutineTools(sp.GetRequiredService<RoutineEngine>()));
+        // Clickys' chats (M14): their own routines as tools; creating and deleting ask on the agent card.
+        // Lazy, since the engine runs routines through the ClickyService these tools are given to.
+        services.AddSingleton(sp => new RoutineConfirmer(sp.GetRequiredService<IAgentPresenter>()));
+        services.AddSingleton(sp => new RoutineTools(sp.GetRequiredService<RoutineEngine>(), confirmer: sp.GetRequiredService<RoutineConfirmer>()));
+        services.AddSingleton<IClickyTools>(sp => new ClickyRoutineTools(new Lazy<RoutineTools>(sp.GetRequiredService<RoutineTools>)));
 
         // Talk and text mode: Claude's routine action, saved once the user agrees on the agent card.
         services.AddSingleton(sp => new RoutineProposer(

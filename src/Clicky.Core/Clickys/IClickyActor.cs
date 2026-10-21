@@ -59,3 +59,20 @@ public sealed class AssistantClickyModel(ClaudeAssistant assistant) : IClickyMod
     public IAsyncEnumerable<ReplyEvent> ReplyAsync(Conversation conversation, ClaudeRequest request, CancellationToken cancellationToken) =>
         assistant.ReplyAsync(conversation, request, cancellationToken);
 }
+
+/// <summary>
+/// Extra tools a Clicky's runs get on top of connectors (M15's routine tools). They are offered with
+/// each request and called by <see cref="ClickyService"/> itself, between replies.
+/// </summary>
+public interface IClickyTools
+{
+    /// <summary>The tools to offer for a run of <paramref name="clicky"/>; a routine run (nobody watching) may get fewer.</summary>
+    IReadOnlyList<Connectors.ConnectorTool> ToolsFor(ClickyAgent clicky, ClickyRunTrigger trigger);
+
+    /// <summary>True if <paramref name="action"/> is a call these tools answer.</summary>
+    bool Answers(Actions.ClickyAction action);
+
+    /// <summary>Runs one call. Problems come back as error outcomes for Claude; only cancellation throws.</summary>
+    /// <param name="toolCallId">The tool call it answers (API backend); null for an action tag.</param>
+    Task<ToolOutcome> CallAsync(ClickyAgent clicky, ClickyRunTrigger trigger, Actions.ClickyAction action, string? toolCallId, CancellationToken cancellationToken);
+}

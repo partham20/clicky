@@ -10,12 +10,25 @@ public sealed record RoutineTool(string Name, string Description, JsonElement In
 
 public sealed record RoutineToolResult(bool IsError, string Text);
 
+/// <summary>Who is calling a routine tool.</summary>
+/// <param name="ClickyId">
+/// The Clicky whose chat the call came from: new routines belong to it, and it sees and changes only
+/// its own. Null for the main Clicky, which sees every routine.
+/// </param>
+/// <param name="Attended">
+/// The user is there to answer (a chat message, not a routine run). Unattended calls can only list
+/// and pause: creating, deleting and running routines needs someone to ask.
+/// </param>
+/// <param name="Near">Where the user is (physical pixels), so the confirmation card shows on that monitor.</param>
+public sealed record RoutineToolContext(string? ClickyId, bool Attended, Geometry.PixelRect? Near = null);
+
 /// <summary>
 /// "Do this every morning" by conversation: tools a chat or agent loop offers so Claude can create,
 /// list, pause, run and delete routines. The schedule is structured; Claude turns "every morning"
-/// into daily at 08:00 using the guidance in the descriptions.
+/// into daily at 08:00 using the guidance in the descriptions. Creating and deleting ask the user
+/// first through <see cref="RoutineConfirmer"/>; without one they are refused.
 /// </summary>
-public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null, Func<TimeZoneInfo>? zone = null)
+public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null, Func<TimeZoneInfo>? zone = null, RoutineConfirmer? confirmer = null)
 {
     public const string Create = "create_routine";
     public const string List = "list_routines";
@@ -50,7 +63,7 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
             Create,
             "Create a routine: something Clicky does on a schedule, such as \"brief me every morning\" or \"check my inbox every few hours\". " +
             "Routines run while Clicky is open, catch up once after sleep, and put their results in the Clicky's chat without speaking. " +
-            "Use it when the user asks for something to happen repeatedly or at a later time.",
+            "Use it when the user asks for something to happen repeatedly or at a later time. The user is asked to save it, and the result says whether they did.",
             $$"""
             {
               "type": "object",
@@ -62,7 +75,7 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
               "required": ["name", "prompt", "schedule"]
             }
             """,
-            needsConfirmation: false),
+            needsConfirmation: true),
         Tool(List, "List the user's routines with their schedule, status and next run.", """{ "type": "object", "properties": {} }""", needsConfirmation: false),
         Tool(
             Pause,
@@ -70,7 +83,7 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
             $$"""{ "type": "object", "properties": { "routine": {{RoutineRef}}, "paused": { "type": "boolean" } }, "required": ["routine", "paused"] }""",
             needsConfirmation: false),
         Tool(RunNow, "Run a routine right now, without changing its schedule.", $$"""{ "type": "object", "properties": { "routine": {{RoutineRef}} }, "required": ["routine"] }""", needsConfirmation: false),
-        Tool(Delete, "Delete a routine and its history. Can't be undone.", $$"""{ "type": "object", "properties": { "routine": {{RoutineRef}} }, "required": ["routine"] }""", needsConfirmation: true),
+        Tool(Delete, "Delete a routine and its history. Can't be undone; the user is asked first.", $$"""{ "type": "object", "properties": { "routine": {{RoutineRef}} }, "required": ["routine"] }""", needsConfirmation: true),
     ];
 
     private readonly TimeProvider _time = time ?? TimeProvider.System;
@@ -80,19 +93,28 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
 
     public static bool IsRoutineTool(string name) => s_definitions.Any(t => t.Name == name);
 
+    /// <summary>The tools to offer: all of them when the user is there, otherwise only list and pause.</summary>
+    public static IReadOnlyList<RoutineTool> For(bool attended) =>
+        attended ? s_definitions : [.. s_definitions.Where(t => !NeedsUser(t.Name))];
+
     /// <summary>Runs a tool call. Problems come back as error results for Claude; only cancellation throws.</summary>
-    /// <param name="clickyId">The Clicky whose chat the call came from; new routines belong to it. Null for the main Clicky.</param>
-    public async Task<RoutineToolResult> CallAsync(string name, JsonElement input, string? clickyId = null, CancellationToken cancellationToken = default)
+    public async Task<RoutineToolResult> CallAsync(string name, JsonElement input, RoutineToolContext context, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(context);
+        if (!context.Attended && NeedsUser(name))
+        {
+            return Error("Nobody is here to ask, so routines can't be created, deleted or run from here. Suggest it to the user in your reply instead.");
+        }
+
         try
         {
             return name switch
             {
-                Create => await CreateAsync(input, clickyId, cancellationToken).ConfigureAwait(false),
-                List => ListRoutines(),
-                Pause => await PauseAsync(input, cancellationToken).ConfigureAwait(false),
-                RunNow => await RunAsync(input, cancellationToken).ConfigureAwait(false),
-                Delete => await DeleteAsync(input, cancellationToken).ConfigureAwait(false),
+                Create => await CreateAsync(input, context, cancellationToken).ConfigureAwait(false),
+                List => ListRoutines(context),
+                Pause => await PauseAsync(input, context, cancellationToken).ConfigureAwait(false),
+                RunNow => await RunAsync(input, context, cancellationToken).ConfigureAwait(false),
+                Delete => await DeleteAsync(input, context, cancellationToken).ConfigureAwait(false),
                 _ => Error($"Unknown tool {name}."),
             };
         }
@@ -139,7 +161,10 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
         return result.Validate() is { } error ? throw new ArgumentException(error) : result;
     }
 
-    private async Task<RoutineToolResult> CreateAsync(JsonElement input, string? clickyId, CancellationToken cancellationToken)
+    /// <summary>Creating and deleting ask the user; running now from a routine could keep a routine running itself.</summary>
+    private static bool NeedsUser(string name) => name is Create or Delete or RunNow;
+
+    private async Task<RoutineToolResult> CreateAsync(JsonElement input, RoutineToolContext context, CancellationToken cancellationToken)
     {
         var name = String(input, "name") ?? throw new ArgumentException("name is required.");
         var prompt = String(input, "prompt") ?? throw new ArgumentException("prompt is required.");
@@ -149,14 +174,37 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
             throw new ArgumentException("That time has already passed.");
         }
 
-        var routine = await engine.CreateAsync(new RoutineDraft(name, prompt, schedule, clickyId), cancellationToken).ConfigureAwait(false);
+        if (confirmer is null)
+        {
+            return Error("Clicky can't ask the user to save a routine from here, so nothing was saved.");
+        }
+
+        var draft = new RoutineDraft(name, prompt, schedule, context.ClickyId);
+        using var card = await confirmer.ConfirmCreateAsync(draft, context.Near, cancellationToken).ConfigureAwait(false);
+        if (!card.Approved)
+        {
+            return new RoutineToolResult(false, $"The user chose not to save the routine \"{name}\". Nothing was set up.");
+        }
+
+        Routine routine;
+        try
+        {
+            routine = await engine.CreateAsync(draft, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException ex)
+        {
+            card.Finish($"Couldn't save it: {ex.Message}", success: false);
+            throw;
+        }
+
+        card.Finish(confirmer.SavedMessage(routine), success: true);
         var next = routine.NextDueAt is { } at ? $" Next run: {RoutineFormat.When(at, _time.GetUtcNow(), _zone(), CultureInfo.InvariantCulture)}." : string.Empty;
-        return new RoutineToolResult(false, $"Created routine \"{routine.Name}\" (id {routine.Id}): {routine.Schedule.Describe(CultureInfo.InvariantCulture)}.{next} It runs while Clicky is open and its results arrive in the chat.");
+        return new RoutineToolResult(false, $"The user saved the routine \"{routine.Name}\" (id {routine.Id}): {routine.Schedule.Describe(CultureInfo.InvariantCulture)}.{next} It runs while Clicky is open and its results arrive in the chat.");
     }
 
-    private RoutineToolResult ListRoutines()
+    private RoutineToolResult ListRoutines(RoutineToolContext context)
     {
-        var routines = engine.Routines;
+        var routines = Visible(context);
         if (routines.Count == 0)
         {
             return new RoutineToolResult(false, "No routines yet.");
@@ -183,37 +231,54 @@ public sealed class RoutineTools(RoutineEngine engine, TimeProvider? time = null
         return new RoutineToolResult(false, text.ToString().TrimEnd());
     }
 
-    private async Task<RoutineToolResult> PauseAsync(JsonElement input, CancellationToken cancellationToken)
+    private async Task<RoutineToolResult> PauseAsync(JsonElement input, RoutineToolContext context, CancellationToken cancellationToken)
     {
-        var routine = Resolve(input);
+        var routine = Resolve(input, context);
         var paused = input.TryGetProperty("paused", out var p) && p.ValueKind == JsonValueKind.True;
         await engine.SetEnabledAsync(routine.Id, !paused, cancellationToken).ConfigureAwait(false);
         return new RoutineToolResult(false, paused ? $"Paused \"{routine.Name}\"." : $"Resumed \"{routine.Name}\". {engine.GetStatus(routine.Id).Text}.");
     }
 
-    private async Task<RoutineToolResult> RunAsync(JsonElement input, CancellationToken cancellationToken)
+    private async Task<RoutineToolResult> RunAsync(JsonElement input, RoutineToolContext context, CancellationToken cancellationToken)
     {
-        var routine = Resolve(input);
+        var routine = Resolve(input, context);
         await engine.RunNowAsync(routine.Id, cancellationToken).ConfigureAwait(false);
         return new RoutineToolResult(false, $"Started \"{routine.Name}\"; its result will arrive in the chat.");
     }
 
-    private async Task<RoutineToolResult> DeleteAsync(JsonElement input, CancellationToken cancellationToken)
+    private async Task<RoutineToolResult> DeleteAsync(JsonElement input, RoutineToolContext context, CancellationToken cancellationToken)
     {
-        var routine = Resolve(input);
+        var routine = Resolve(input, context);
+        if (confirmer is null)
+        {
+            return Error("Clicky can't ask the user to delete a routine from here, so nothing was deleted.");
+        }
+
+        using var card = await confirmer.ConfirmDeleteAsync(routine, context.Near, cancellationToken).ConfigureAwait(false);
+        if (!card.Approved)
+        {
+            return new RoutineToolResult(false, $"The user chose to keep \"{routine.Name}\". Nothing was deleted.");
+        }
+
         await engine.DeleteAsync(routine.Id, cancellationToken).ConfigureAwait(false);
+        card.Finish($"Deleted \u201C{routine.Name}\u201D.", success: true);
         return new RoutineToolResult(false, $"Deleted \"{routine.Name}\".");
     }
 
-    private Routine Resolve(JsonElement input)
+    /// <summary>The routines this caller may see and change.</summary>
+    private List<Routine> Visible(RoutineToolContext context) =>
+        [.. engine.Routines.Where(r => context.ClickyId is null || string.Equals(r.ClickyId, context.ClickyId, StringComparison.Ordinal))];
+
+    private Routine Resolve(JsonElement input, RoutineToolContext context)
     {
         var key = String(input, "routine") ?? throw new ArgumentException("routine is required.");
-        if (engine.Find(key) is { } byId)
+        var visible = Visible(context);
+        if (visible.FirstOrDefault(r => r.Id == key) is { } byId)
         {
             return byId;
         }
 
-        var byName = engine.Routines.Where(r => string.Equals(r.Name, key, StringComparison.OrdinalIgnoreCase)).ToList();
+        var byName = visible.Where(r => string.Equals(r.Name, key, StringComparison.OrdinalIgnoreCase)).ToList();
         return byName.Count switch
         {
             1 => byName[0],

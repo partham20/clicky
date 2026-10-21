@@ -93,10 +93,15 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
         var current = settings.Current;
         var useToolset = current.Agent.ComputerToolset && current.Agent.Enabled && !_toolsetRefused;
         IReadOnlyList<ConnectorTool> connectorTools = connectors is null ? [] : await connectors.GetToolsAsync(s_connectorWait, cancellationToken).ConfigureAwait(false);
+        if (request.Tools is { Count: > 0 } extra)
+        {
+            connectorTools = [.. connectorTools, .. extra];
+        }
+
         var parameters = BuildParameters(conversation, request, userText, model, effort, connectorTools, useToolset);
         var results = DefaultToolResults.Resolve(conversation.PendingToolCalls, request.Step?.Results ?? conversation.UnsentResults);
         var limits = new HistoryLimits(current.Claude.MaxTurns);
-        var reply = new StreamState(request.Screenshot, connectors);
+        var reply = new StreamState(request.Screenshot, connectors, request.Tools);
         var stopwatch = Stopwatch.StartNew();
 
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -491,7 +496,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
     }
 
     /// <summary>Turns stream events into reply events and remembers what to store in history.</summary>
-    private sealed class StreamState(RequestScreenshot? screenshot, IConnectorTools? connectors)
+    private sealed class StreamState(RequestScreenshot? screenshot, IConnectorTools? connectors, IReadOnlyList<ConnectorTool>? requestTools = null)
     {
         private readonly Dictionary<long, Block> _blocks = [];
         private readonly List<ClickyAction> _actions = [];
@@ -669,7 +674,7 @@ public sealed class AnthropicApiBackend(ISecretStore secrets, ISettingsStore set
                 return action is not null ? ActionParseResult.Valid(action) : new ActionParseResult(null, name, error);
             }
 
-            if (connectors?.IsConnectorTool(name) == true)
+            if (connectors?.IsConnectorTool(name) == true || requestTools?.Any(t => t.Name == name) == true)
             {
                 try
                 {
