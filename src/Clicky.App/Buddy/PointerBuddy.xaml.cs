@@ -12,7 +12,13 @@ public partial class PointerBuddy : UserControl, IBuddyVisual
     private static readonly Point TipInBox = new(24, 24);
     private static readonly Vector TipFromHotspot = new(18, 14);
 
+    // Caption bubble's gap from the arrow tip, and its widest line.
+    private const double CaptionOffset = 44;
+    public const double CaptionMaxWidth = 300;
+
     private BuddyState _state = BuddyState.Idle;
+    private float _level;
+    private bool _captionOnLeft;
 
     public PointerBuddy()
     {
@@ -40,6 +46,56 @@ public partial class PointerBuddy : UserControl, IBuddyVisual
 
             _state = value;
             ApplyState(useTransitions: true);
+            ApplyLevel();
+        }
+    }
+
+    public float Level
+    {
+        get => _level;
+        set
+        {
+            if (_level != value)
+            {
+                _level = value;
+                ApplyLevel();
+            }
+        }
+    }
+
+    public string? Caption
+    {
+        get => CaptionText.Text.Length == 0 ? null : CaptionText.Text;
+        set
+        {
+            CaptionText.Text = value ?? string.Empty;
+            CaptionBubble.Visibility = string.IsNullOrEmpty(value) ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    public bool CaptionOnLeft
+    {
+        get => _captionOnLeft;
+        set
+        {
+            if (_captionOnLeft == value)
+            {
+                return;
+            }
+
+            _captionOnLeft = value;
+
+            // Canvas.Right counts from the 64 DIP box's right edge, so this mirrors the bubble about the arrow.
+            if (value)
+            {
+                CaptionBubble.ClearValue(Canvas.LeftProperty);
+                Canvas.SetRight(CaptionBubble, CaptionOffset);
+            }
+            else
+            {
+                CaptionBubble.ClearValue(Canvas.RightProperty);
+                Canvas.SetLeft(CaptionBubble, CaptionOffset);
+            }
         }
     }
 
@@ -51,4 +107,12 @@ public partial class PointerBuddy : UserControl, IBuddyVisual
 
     private void ApplyState(bool useTransitions) =>
         VisualStateManager.GoToElementState(LayoutRoot, _state.ToString(), useTransitions);
+
+    /// <summary>A solid disc behind the arrow that swells with the voice; the pulsing ring keeps going regardless.</summary>
+    private void ApplyLevel()
+    {
+        var level = _state == BuddyState.Listening ? _level : 0f;
+        LevelDisc.Opacity = level < 0.05f ? 0 : 0.15 + (0.35 * level);
+        LevelScale.ScaleX = LevelScale.ScaleY = 0.6 + (0.6 * level);
+    }
 }

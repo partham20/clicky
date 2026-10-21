@@ -40,6 +40,7 @@ internal sealed class DockedBuddyView : ContentControl
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _presence.StateChanged += OnPresenceChanged;
+        _presence.LevelChanged += OnLevelChanged;
         _settings.Changed += OnSettingsChanged;
         Refresh();
     }
@@ -47,11 +48,15 @@ internal sealed class DockedBuddyView : ContentControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _presence.StateChanged -= OnPresenceChanged;
+        _presence.LevelChanged -= OnLevelChanged;
         _settings.Changed -= OnSettingsChanged;
         _visual.State = BuddyState.Idle;
     }
 
     private void OnPresenceChanged(object? sender, BuddyStateChangedEventArgs e) => _dispatcher.InvokeAsync(Refresh);
+
+    private void OnLevelChanged(object? sender, EventArgs e) =>
+        _dispatcher.InvokeAsync(() => _visual.Level = _presence.Level, DispatcherPriority.Render);
 
     private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e) => _dispatcher.InvokeAsync(Refresh);
 

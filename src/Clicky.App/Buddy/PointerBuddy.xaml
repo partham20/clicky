@@ -77,6 +77,21 @@
       </Ellipse.Fill>
     </Ellipse>
 
+    <!-- Listening: a disc that swells with the mic level (driven from code, not a storyboard). -->
+    <Ellipse
+        x:Name="LevelDisc"
+        Canvas.Left="11.5"
+        Canvas.Top="15"
+        Width="36"
+        Height="36"
+        Fill="#2563EB"
+        Opacity="0"
+        RenderTransformOrigin="0.5,0.5">
+      <Ellipse.RenderTransform>
+        <ScaleTransform x:Name="LevelScale" ScaleX="0.6" ScaleY="0.6" />
+      </Ellipse.RenderTransform>
+    </Ellipse>
+
     <!-- Listening: a ring that pulses outward. -->
     <Ellipse
         x:Name="Ring"
@@ -128,5 +143,27 @@
         <DropShadowEffect BlurRadius="4" Opacity="0.35" ShadowDepth="1" Direction="300" />
       </Path.Effect>
     </Path>
+
+    <!-- What the buddy heard (or why it could not), beside the arrow. Overflows the 64x64 box on purpose. -->
+    <Border
+        x:Name="CaptionBubble"
+        Canvas.Left="44"
+        Canvas.Top="40"
+        MaxWidth="300"
+        Padding="10,6"
+        Background="#F2FFFFFF"
+        BorderBrush="#332563EB"
+        BorderThickness="1"
+        CornerRadius="10"
+        Visibility="Collapsed">
+      <Border.Effect>
+        <DropShadowEffect BlurRadius="8" Opacity="0.25" ShadowDepth="1" Direction="300" />
+      </Border.Effect>
+      <TextBlock
+          x:Name="CaptionText"
+          FontSize="13"
+          Foreground="#1F2937"
+          TextWrapping="Wrap" />
+    </Border>
   </Canvas>
 </UserControl>

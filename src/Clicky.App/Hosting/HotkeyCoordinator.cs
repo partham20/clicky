@@ -4,6 +4,7 @@ using Clicky.Core.Capture;
 using Clicky.Core.Geometry;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Settings;
+using Clicky.Core.Voice;
 using Clicky.Platform.Windows.Input;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,20 +12,34 @@ using Microsoft.Extensions.Logging;
 namespace Clicky.App.Hosting;
 
 /// <summary>
-/// What each hotkey does. M2 wires Talk to the buddy and a screenshot, and OpenHome to Home; the
-/// rest are logged until their milestones (voice M3/M4, text mode and dictation later).
+/// What each hotkey does. Talk opens the mic the moment its keys go down (Pending), shows the buddy
+/// listening and takes a screenshot once it arms, and on release turns the speech into text and
+/// shows it beside the buddy. OpenHome opens Home. The rest are logged until their milestones
+/// (text mode M10, dictation M12).
 /// </summary>
-/// <remarks>Events arrive on the hotkey pump thread; nothing here blocks it or the UI thread.</remarks>
+/// <remarks>Events arrive on the hotkey pump thread, one at a time; nothing here blocks it or the UI thread.</remarks>
 internal sealed class HotkeyCoordinator(
     IHotkeyService hotkeys,
     ICaptureService capture,
+    VoiceInput voice,
     IBuddyPresence presence,
     ISettingsStore settings,
     IAppShell shell,
+    IUserNotifier notifier,
     Dispatcher dispatcher,
     ILogger<HotkeyCoordinator> logger) : IHostedService, IDisposable
 {
+    private static readonly TimeSpan TranscriptCaptionTime = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan ProblemCaptionTime = TimeSpan.FromSeconds(8);
+
     private readonly CancellationTokenSource _stopping = new();
+
+    // Hotkey thread only.
+    private VoiceSession? _talk;
+
+    // Also read on the capture thread (level) and by completions on the thread pool.
+    private volatile bool _talkArmed;
+    private int _talkGeneration;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -39,6 +54,7 @@ internal sealed class HotkeyCoordinator(
     {
         hotkeys.Triggered -= OnHotkey;
         await _stopping.CancelAsync();
+        _talk?.Cancel();
     }
 
     public void Dispose() => _stopping.Dispose();
@@ -47,7 +63,15 @@ internal sealed class HotkeyCoordinator(
     {
         switch (e.Action, e.Phase)
         {
+            case (HotkeyAction.Talk, HotkeyPhase.Pending):
+                StartListening();
+                break;
+
             case (HotkeyAction.Talk, HotkeyPhase.Started):
+                Interlocked.Increment(ref _talkGeneration);
+                _talkArmed = true;
+                StartListening();
+                presence.SetCaption(null);
                 presence.SetState(BuddyState.Listening);
 
                 // The pointer where the user was looking when they pressed, not where it is when the capture runs.
@@ -55,17 +79,123 @@ internal sealed class HotkeyCoordinator(
                 _ = CaptureForTalkAsync(new CaptureTarget(settings.Current.Capture.Mode, cursor));
                 break;
 
-            case (HotkeyAction.Talk, HotkeyPhase.Ended or HotkeyPhase.Cancelled):
-                presence.SetState(BuddyState.Idle);
+            case (HotkeyAction.Talk, HotkeyPhase.Cancelled):
+                _talk?.Cancel();
+                _talk = null;
+                if (_talkArmed)
+                {
+                    _talkArmed = false;
+                    presence.SetLevel(0);
+                    presence.SetState(BuddyState.Idle);
+                }
+
+                break;
+
+            case (HotkeyAction.Talk, HotkeyPhase.Ended):
+                var session = _talk;
+                _talk = null;
+                _talkArmed = false;
+                presence.SetLevel(0);
+                if (session is null)
+                {
+                    presence.SetState(BuddyState.Idle);
+                    break;
+                }
+
+                presence.SetState(BuddyState.Thinking);
+                _ = FinishTalkAsync(session, Volatile.Read(ref _talkGeneration));
                 break;
 
             case (HotkeyAction.OpenHome, HotkeyPhase.Fired):
                 dispatcher.InvokeAsync(shell.ShowHome);
                 break;
 
+            case (_, HotkeyPhase.Pending or HotkeyPhase.Cancelled):
+                // Only Talk does work before a hold arms; the others are logged once they start.
+                break;
+
             default:
                 logger.LogInformation("Hotkey {Action} {Phase} (not wired up yet)", e.Action, e.Phase);
                 break;
+        }
+    }
+
+    private void StartListening()
+    {
+        if (_talk is not null)
+        {
+            return;
+        }
+
+        var session = voice.Start();
+        session.LevelChanged += level =>
+        {
+            if (_talkArmed)
+            {
+                presence.SetLevel(level);
+            }
+        };
+        _talk = session;
+    }
+
+    private async Task FinishTalkAsync(VoiceSession session, int generation)
+    {
+        VoiceResult result;
+        try
+        {
+            result = await session.CompleteAsync(_stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+        {
+            return;
+        }
+        finally
+        {
+            session.Dispose();
+        }
+
+        // A newer Talk owns the buddy now; this one's result only goes to the log.
+        if (generation != Volatile.Read(ref _talkGeneration) || _talkArmed)
+        {
+            return;
+        }
+
+        presence.SetState(BuddyState.Idle);
+        switch (result.Outcome)
+        {
+            case VoiceOutcome.Transcribed:
+                // M6 sends this, with the screenshot, to Claude. Until then the buddy shows what it heard.
+                ShowCaption($"“{result.Text}”", TranscriptCaptionTime);
+                break;
+
+            case VoiceOutcome.Failed:
+                var problem = result.Problem ?? "Something went wrong with speech input.";
+                ShowCaption(problem, ProblemCaptionTime);
+                notifier.Notify(result.MicrophoneProblem is null ? "Clicky couldn't transcribe that" : "Clicky can't hear you", problem, warning: true);
+                break;
+        }
+    }
+
+    private void ShowCaption(string text, TimeSpan duration)
+    {
+        presence.SetCaption(text);
+        _ = ClearCaptionAsync(presence.Caption, duration);
+    }
+
+    private async Task ClearCaptionAsync(string? caption, TimeSpan delay)
+    {
+        try
+        {
+            await Task.Delay(delay, _stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (caption is not null && string.Equals(presence.Caption, caption, StringComparison.Ordinal))
+        {
+            presence.SetCaption(null);
         }
     }
 

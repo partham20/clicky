@@ -22,7 +22,8 @@ internal sealed class AppShell(
     ClickyPaths paths,
     IHostApplicationLifetime lifetime,
     Func<DockedBuddyView> dockedBuddy,
-    Func<HotkeysSettingsView> hotkeysView) : IAppShell
+    Func<HotkeysSettingsView> hotkeysView,
+    Func<VoiceSettingsView> voiceView) : IAppShell
 {
     private PlaceholderWindow? _home;
     private PlaceholderWindow? _settings;
@@ -36,10 +37,10 @@ internal sealed class AppShell(
             $"Settings pages arrive in M18. Until then, edit the file directly; changes apply live.\n\n{paths.SettingsFile}",
             "Show settings.json",
             () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose(),
-            new ScrollViewer { Content = hotkeysView(), VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
+            new ScrollViewer { Content = new StackPanel { Children = { hotkeysView(), voiceView() } }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
         {
-            Width = 620,
-            Height = 620,
+            Width = 640,
+            Height = 820,
         });
 
     public void Quit() => lifetime.StopApplication();
