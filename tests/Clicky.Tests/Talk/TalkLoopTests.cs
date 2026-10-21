@@ -83,6 +83,28 @@ public sealed class TalkLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Steps_go_to_the_walkthrough_and_app_guides_go_with_the_question()
+    {
+        var walkthroughs = new RecordingWalkthroughs();
+        using var loop = new TalkLoop(_assistant, _memory, _annotations, _ink, NullLogger<TalkLoop>.Instance, walkthroughs: walkthroughs, context: _ => "[App guide \"Excel\"]");
+        var step = new StepAction(1, "Open the Data tab", 3, 100, 50);
+        _assistant.Script = (_, _, _) => Events(
+            new ReplyStarted(ClaudeBackendKind.Api, "m", ModelTier.Deep, "walkthrough"),
+            new ReplyText("Open the Data tab."),
+            new ReplyAction(step),
+            new ReplyAction(new PointAction(10, 10)),
+            Completed(ReplyStop.EndTurn, new SayAction("Open the Data tab."), step));
+
+        var result = await loop.AnswerAsync(Question("how do I sort?"), Begin);
+
+        Assert.Equal("[App guide \"Excel\"]", _assistant.Requests[0].Context);
+        Assert.Equal(5, walkthroughs.Events.Count);
+        Assert.All(walkthroughs.Geometries, g => Assert.Same(Geometry, g));
+        Assert.IsType<PointAction>(Assert.Single(_annotations.Shown).Action);
+        Assert.Equal(2, result.Marks);
+    }
+
+    [Fact]
     public async Task Pointer_off_the_screenshot_is_left_out_and_no_capture_means_no_marks()
     {
         _assistant.Script = (_, _, _) => Events(new ReplyAction(new PointAction(1, 1)), Completed(ReplyStop.EndTurn));
@@ -470,5 +492,46 @@ public sealed class TalkLoopTests : IDisposable
             Continued++;
             return steps(conversation, completed, screenshot);
         }
+    }
+}
+
+internal sealed class RecordingWalkthroughs : Clicky.Core.Walkthroughs.IWalkthroughs
+{
+    public List<ReplyEvent> Events { get; } = [];
+
+    public List<ScreenshotGeometry?> Geometries { get; } = [];
+
+    public Clicky.Core.Walkthroughs.WalkthroughSnapshot? Current => null;
+
+    public event EventHandler<Clicky.Core.Walkthroughs.WalkthroughChangedEventArgs>? Changed
+    {
+        add { }
+        remove { }
+    }
+
+    public void Observe(ReplyEvent replyEvent, ScreenshotGeometry? geometry)
+    {
+        Events.Add(replyEvent);
+        Geometries.Add(geometry);
+    }
+
+    public void MarkDone()
+    {
+    }
+
+    public void Skip()
+    {
+    }
+
+    public void Back()
+    {
+    }
+
+    public void Retry()
+    {
+    }
+
+    public void Cancel()
+    {
     }
 }

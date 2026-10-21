@@ -38,6 +38,9 @@ public sealed class ClickyPaths
     /// <summary>Text of every dictation, one file per day, kept for settings.dictation.keepHistoryDays.</summary>
     public string DictationHistoryDirectory => Path.Combine(Root, "dictation");
 
+    /// <summary>Zips made by Report a bug; the newest few are kept.</summary>
+    public string BugReportsDirectory => Path.Combine(Root, "bug-reports");
+
     /// <summary>Only written when settings.debug.saveCaptures is on.</summary>
     public string DebugCapturesDirectory => Path.Combine(Root, "debug", "captures");
 

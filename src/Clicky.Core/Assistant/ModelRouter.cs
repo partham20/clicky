@@ -37,6 +37,12 @@ public static partial class ModelRouter
             return new(ModelTier.Deep, "agent");
         }
 
+        // The next step has to land on the right control in a screen that just changed.
+        if (request.Source == RequestSource.Walkthrough)
+        {
+            return new(ModelTier.Deep, "walkthrough");
+        }
+
         // Reading a whole document well is deep-model work, and its tokens dwarf the latency difference.
         if (request.Attachments?.Any(a => a.Kind == AttachmentKind.Document) == true)
         {

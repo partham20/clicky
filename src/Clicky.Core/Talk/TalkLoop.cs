@@ -5,6 +5,7 @@ using Clicky.Core.Assistant;
 using Clicky.Core.Geometry;
 using Clicky.Core.Ink;
 using Clicky.Core.Memory;
+using Clicky.Core.Walkthroughs;
 using Microsoft.Extensions.Logging;
 
 namespace Clicky.Core.Talk;
@@ -32,6 +33,8 @@ public sealed class TalkLoop : IDisposable
     private readonly IAnnotationRenderer _annotations;
     private readonly IInkTrailService _ink;
     private readonly IComputerAgent? _agent;
+    private readonly IWalkthroughs? _walkthroughs;
+    private readonly Func<Conversation, string?>? _context;
     private readonly ILogger<TalkLoop> _logger;
     private readonly TimeProvider _time;
     private readonly Lock _gate = new();
@@ -41,6 +44,8 @@ public sealed class TalkLoop : IDisposable
     private Task _answering = Task.CompletedTask;
     private Task<string?>? _memoryPrompt;
 
+    /// <param name="walkthroughs">Gets every reply event and draws step actions itself (M8).</param>
+    /// <param name="context">Reference text for a question in a conversation: the app guides for the app in front (M8).</param>
     public TalkLoop(
         IClaudeAssistant assistant,
         IMemoryService memory,
@@ -48,7 +53,9 @@ public sealed class TalkLoop : IDisposable
         IInkTrailService ink,
         ILogger<TalkLoop> logger,
         IComputerAgent? agent = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IWalkthroughs? walkthroughs = null,
+        Func<Conversation, string?>? context = null)
     {
         _assistant = assistant;
         _memory = memory;
@@ -57,6 +64,8 @@ public sealed class TalkLoop : IDisposable
         _logger = logger;
         _agent = agent;
         _time = time ?? TimeProvider.System;
+        _walkthroughs = walkthroughs;
+        _context = context;
 
         _assistant.ConversationEnded += OnConversationEnded;
         _memory.Updated += OnMemoryUpdated;
@@ -203,7 +212,7 @@ public sealed class TalkLoop : IDisposable
 
         var conversation = _assistant.CurrentConversation(memory);
         var screenshot = await WithInkAsync(ToScreenshot(question), question.Ink, cancellationToken).ConfigureAwait(false);
-        var request = new ClaudeRequest(question.Text, question.Source, screenshot, Attachments: question.Attachments);
+        var request = new ClaudeRequest(question.Text, question.Source, screenshot, Context: Context(conversation), Attachments: question.Attachments);
         var answer = new Answer(beginReply, screenshot?.Geometry);
 
         try
@@ -259,9 +268,28 @@ public sealed class TalkLoop : IDisposable
         }
     }
 
+    private string? Context(Conversation conversation)
+    {
+        try
+        {
+            return _context?.Invoke(conversation);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogWarning(ex, "Talk: could not read the app guides; asking without them");
+            return null;
+        }
+    }
+
     /// <summary>Routes one event; returns it when it is the final one.</summary>
     private ReplyCompleted? Handle(ReplyEvent replyEvent, Answer answer)
     {
+        if (replyEvent is ReplyScreenshotTaken taken)
+        {
+            answer.Geometry = taken.Screenshot.Geometry;
+        }
+
+        _walkthroughs?.Observe(replyEvent, answer.Geometry);
         switch (replyEvent)
         {
             case ReplyStarted started:
@@ -276,6 +304,11 @@ public sealed class TalkLoop : IDisposable
                 // Speech already streamed as text.
                 break;
 
+            case ReplyAction { Action: StepAction } when _walkthroughs is not null:
+                // The walkthrough draws its steps and watches for the user doing them.
+                answer.Marks++;
+                break;
+
             case ReplyAction action:
                 Show(action.Action, answer);
                 break;
@@ -284,9 +317,6 @@ public sealed class TalkLoop : IDisposable
                 _logger.LogInformation("Talk: Claude's {Action} was dropped: {Reason}", rejected.Name, rejected.Reason);
                 break;
 
-            case ReplyScreenshotTaken taken:
-                answer.Geometry = taken.Screenshot.Geometry;
-                break;
 
             case ReplyCompleted completed:
                 return completed;

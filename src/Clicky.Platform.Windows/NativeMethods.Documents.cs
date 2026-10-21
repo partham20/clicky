@@ -2,13 +2,10 @@ using System.Runtime.InteropServices;
 
 namespace Clicky.Platform.Windows;
 
+// GetAncestor and GaRoot are in NativeMethods.Walkthroughs.cs.
 internal static partial class NativeMethods
 {
-    internal const uint GaRoot = 2;
     internal const int VkLButton = 0x01;
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint GetAncestor(nint hwnd, uint gaFlags);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

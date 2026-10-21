@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Clicky.App.Buddy;
@@ -8,10 +10,12 @@ using Clicky.Core;
 using Clicky.Platform.Windows;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.SingleInstance;
+using Clicky.Platform.Windows.Startup;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Core;
+using Velopack;
 
 namespace Clicky.App;
 
@@ -22,10 +26,14 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // M18: VelopackApp.Build().Run() goes first, before anything else touches disk or UI.
+        // First, before anything touches disk or UI: Velopack's install/update/uninstall hooks run
+        // here and exit, and an update downloaded last session is applied (restarting into it).
+        VelopackApp.Build()
+            .OnBeforeUninstallFastCallback(_ => RemoveStartWithWindows())
+            .Run();
 
         // Single instance check runs before logging/host so a second copy has no side effects.
-        using var instance = SingleInstanceGuard.Acquire(AppId);
+        using var instance = SingleInstanceGuard.Acquire(InstanceId());
         if (!instance.IsPrimary)
         {
             ForegroundRights.GrantToAnyProcess();
@@ -104,6 +112,33 @@ public static class Program
         finally
         {
             Log.CloseAndFlush();
+        }
+    }
+
+    // A separate data folder (CLICKY_DATA_DIR: tests, a dev build beside the installed one) is a
+    // separate instance, so it neither hands off to nor blocks the everyday copy.
+    private static string InstanceId()
+    {
+        var dataDir = Environment.GetEnvironmentVariable("CLICKY_DATA_DIR");
+        if (string.IsNullOrWhiteSpace(dataDir))
+        {
+            return AppId;
+        }
+
+        var key = Encoding.UTF8.GetBytes(Path.GetFullPath(dataDir).TrimEnd('\\').ToUpperInvariant());
+        return $"{AppId}-{Convert.ToHexString(SHA256.HashData(key))[..12]}";
+    }
+
+    // Uninstall must not leave a Run entry pointing at a deleted exe. No logging yet at this point.
+    private static void RemoveStartWithWindows()
+    {
+        try
+        {
+            new StartupRegistration(AppId, Environment.ProcessPath ?? AppId).Disable();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            // Nothing to report to: the uninstaller carries on regardless.
         }
     }
 

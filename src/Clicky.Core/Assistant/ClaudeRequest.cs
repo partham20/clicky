@@ -54,6 +54,9 @@ public enum RequestSource
 
     /// <summary>A step of a computer-use agent.</summary>
     Agent,
+
+    /// <summary>Clicky asking for the next step of a walkthrough, after the user did one (M8).</summary>
+    Walkthrough,
 }
 
 /// <param name="Png">The downscaled screenshot.</param>
@@ -64,10 +67,15 @@ public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, 
 
 /// <param name="Text">What the user said or typed.</param>
 /// <param name="Tier">Forces the fast or deep model; null lets the router decide.</param>
+/// <param name="Context">
+/// Reference text that goes with this question, between the screen line and the user's words: app
+/// guides from the skills folder (<see cref="Skills.IAppSkills.ContextFor"/>). Null for none.
+/// </param>
 /// <param name="Attachments">Documents and pictures to read with the question (text mode, M10); see <see cref="RequestAttachment"/>.</param>
 public sealed record ClaudeRequest(
     string Text,
     RequestSource Source,
     RequestScreenshot? Screenshot = null,
     ModelTier? Tier = null,
+    string? Context = null,
     IReadOnlyList<RequestAttachment>? Attachments = null);
