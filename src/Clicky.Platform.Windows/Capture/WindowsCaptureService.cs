@@ -103,6 +103,44 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
         }
     }
 
+    public async Task WarmUpAsync(CancellationToken cancellationToken = default)
+    {
+        if (_disposed || !GraphicsCaptureSession.IsSupported())
+        {
+            return;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
+            _device ??= CreateDevice();
+            _borderless ??= RequestBorderlessAsync();
+            await _borderless.ConfigureAwait(false);
+
+            // Loads the capture item factory and the PNG codec with its scaler.
+            _ = ActivationFactoryWarmUp();
+            await EncodePngAsync(new byte[16 * 16 * 4], 16, 16, 8, 8).ConfigureAwait(false);
+            _logger.LogInformation("Capture path warmed up in {Ms:0} ms", stopwatch.Elapsed.TotalMilliseconds);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException or ArgumentException)
+        {
+            _logger.LogWarning(ex, "Capture warm-up failed; the first capture will be slower");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -236,6 +274,8 @@ public sealed class WindowsCaptureService : ICaptureService, IDisposable
         _logger.LogDebug("Frame {Width}x{Height} {Format} from {Item}", width, height, PixelFormat, item.DisplayName);
         return new Frame(pixels, width, height, new PixelRect(expected.Left, expected.Top, expected.Left + width, expected.Top + height));
     }
+
+    private static bool ActivationFactoryWarmUp() => WinRT.ActivationFactory.Get("Windows.Graphics.Capture.GraphicsCaptureItem") is not null;
 
     private IDirect3DDevice CreateDevice()
     {

@@ -1,9 +1,14 @@
 using System.Windows.Threading;
 using Clicky.App.Buddy;
 using Clicky.App.Tray;
+using Clicky.App.Views;
 using Clicky.Core;
 using Clicky.Core.Buddy;
+using Clicky.Core.Capture;
+using Clicky.Core.Hotkeys;
 using Clicky.Core.Settings;
+using Clicky.Platform.Windows.Capture;
+using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Startup;
@@ -46,11 +51,18 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<IBuddyPresence, BuddyPresence>();
         services.AddSingleton<IBuddySkin, PointerBuddySkin>();
 
+        services.AddSingleton<WindowsHotkeyService>();
+        services.AddSingleton<IHotkeyService>(sp => sp.GetRequiredService<WindowsHotkeyService>());
+        services.AddSingleton<WindowsCaptureService>();
+        services.AddSingleton<ICaptureService>(sp => sp.GetRequiredService<WindowsCaptureService>());
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
         services.AddTransient<DockedBuddyView>();
         services.AddSingleton<Func<DockedBuddyView>>(sp => sp.GetRequiredService<DockedBuddyView>);
+        services.AddTransient<HotkeysSettingsView>();
+        services.AddSingleton<Func<HotkeysSettingsView>>(sp => sp.GetRequiredService<HotkeysSettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
@@ -59,6 +71,8 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<LogLevelBinder>();
         services.AddHostedService<StartWithWindowsService>();
         services.AddHostedService<ActivationListener>();
+        services.AddHostedService<HotkeyCoordinator>();
+        services.AddHostedService<HotkeySettingsBinder>();
 
         return services;
     }

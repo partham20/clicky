@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using System.Windows.Controls;
 using Clicky.App.Buddy;
 using Clicky.App.Views;
 using Clicky.Core;
@@ -17,7 +18,11 @@ public interface IAppShell
     void Quit();
 }
 
-internal sealed class AppShell(ClickyPaths paths, IHostApplicationLifetime lifetime, Func<DockedBuddyView> dockedBuddy) : IAppShell
+internal sealed class AppShell(
+    ClickyPaths paths,
+    IHostApplicationLifetime lifetime,
+    Func<DockedBuddyView> dockedBuddy,
+    Func<HotkeysSettingsView> hotkeysView) : IAppShell
 {
     private PlaceholderWindow? _home;
     private PlaceholderWindow? _settings;
@@ -30,7 +35,12 @@ internal sealed class AppShell(ClickyPaths paths, IHostApplicationLifetime lifet
             "Clicky Settings",
             $"Settings pages arrive in M18. Until then, edit the file directly; changes apply live.\n\n{paths.SettingsFile}",
             "Show settings.json",
-            () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose()));
+            () => Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{paths.SettingsFile}\"") { UseShellExecute = true })?.Dispose(),
+            new ScrollViewer { Content = hotkeysView(), VerticalScrollBarVisibility = ScrollBarVisibility.Auto })
+        {
+            Width = 620,
+            Height = 620,
+        });
 
     public void Quit() => lifetime.StopApplication();
 

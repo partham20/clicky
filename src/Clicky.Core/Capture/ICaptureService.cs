@@ -36,6 +36,12 @@ public interface ICaptureService
     /// </summary>
     /// <exception cref="CaptureException">Capture is unsupported or failed.</exception>
     Task<CaptureResult> CaptureAsync(CaptureTarget target, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates the devices and loads the codecs a capture needs, so the first real capture is not
+    /// slower than the rest. Takes no screenshot. Safe to call more than once; never throws.
+    /// </summary>
+    Task WarmUpAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class CaptureException : Exception
