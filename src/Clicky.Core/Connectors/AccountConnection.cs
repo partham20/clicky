@@ -325,8 +325,12 @@ internal sealed class AccountConnection : IAsyncDisposable
     private async Task WaitToRetryAsync(int failures, string reason, CancellationToken cancellationToken)
     {
         var delay = Backoff[Math.Clamp(failures - 1, 0, Backoff.Length - 1)];
+
+        // Start the timer before publishing RetryAt, so whoever sees the retry time (a test
+        // advancing a fake clock) finds the wait already running.
+        var wait = Task.Delay(delay, _time, cancellationToken);
         Set(ConnectionState.Failed, reason, retryAt: _time.GetUtcNow() + delay);
-        await Task.Delay(delay, _time, cancellationToken).ConfigureAwait(false);
+        await wait.ConfigureAwait(false);
     }
 
     private static async Task<IReadOnlyList<McpToolInfo>> ListToolsAsync(IMcpSession session, CancellationToken cancellationToken)
