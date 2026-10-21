@@ -35,6 +35,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `debug.saveCaptures`: also write every screenshot to `debug\captures\yyyyMMdd-HHmmss.png`, with a red crosshair where the pointer maps to. Off by default; nothing else writes screenshots to disk.
 - `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
 - `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
+- `memory\PROFILE.md` and `memory\VOLATILE.md`: what Clicky remembers about you (see Memory below). `memory`: `enabled` (true), `autoUpdate` (true), `idleMinutes` (3). Also in Settings › Memory.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
@@ -106,3 +107,20 @@ Replies are spoken sentence by sentence as their text arrives: the buddy shows S
   - **Focus Assist / Do not disturb, presentations, full-screen apps and games.** `SHQueryUserNotificationState` (documented) for presentation mode, full screen and quiet time, plus the shell's own Focus Assist state (undocumented WNF) and Windows 11's Do not disturb setting. Each check fails open, to speaking, if Windows changes underneath it.
 - **Overlays are not full-screen windows.** The shell treats a topmost window the size of the monitor as a full-screen app, so before M4 the buddy's overlays switched on Windows' automatic Focus Assist and reported the user as busy to every app. They now carry the shell's `NonRudeHWND` opt-out.
 - **settings.json** saved as "UTF-8 with BOM" (Notepad and PowerShell can do that) used to count as corrupt; it now loads.
+
+## Memory (M11)
+
+Two Markdown files in `%AppData%\Clicky\memory`, both plain text you can edit in Settings › Memory or any editor:
+
+- `PROFILE.md`: who you are, how you want answers ("How to answer"), habits and tools. Long-lived.
+- `VOLATILE.md`: what you're working on now and open threads. Expected to churn.
+
+How it flows (`Clicky.Core/Memory`, no Windows APIs):
+
+- **Into prompts.** `IMemoryService.GetPromptAsync()` returns a `<memory>` block for the system prompt of voice, dictation and agent requests. Files are read per request and cached by timestamp and size, so edits from another editor apply on the next answer. Sections are never cut: if hand edits push memory past the prompt budget (9,500 characters), whole sections drop out and the block says how many. `VOLATILE.md` older than 14 days is marked as possibly out of date.
+- **Updater pass.** `RecordTurn()` queues each exchange. After `idleMinutes` of quiet (or `EndConversationAsync()`), one request to the fast model (`IMemoryModel`) gets the queued turns, both files and the room left, and replies with JSON edits (`add`, `replace`, `remove`). A turn that sounds like feedback or a preference ("you talk too much", "from now on…", "remember that…", "forget…") runs the pass right away, so the next answer already follows it. A failed call keeps the turns (up to 40) for the next pass.
+- **Merge rules** (`MemoryMerger`). Entries match ignoring case, spacing and end punctuation; an add that already exists is a no-op; replace/remove need the exact old entry, never a guess. Nothing is ever shortened: an entry over 280 characters, or an edit that would push `PROFILE.md` past 6,000 or `VOLATILE.md` past 3,000 characters, is refused whole (the model is told the room left so it consolidates instead). Anything that looks like a key, token or password is refused. At most 12 edits per pass. The merge runs against the files as they are on disk at that moment, so a hand edit made meanwhile is kept.
+- **Undo and forget.** Settings › Memory can undo Clicky's last automatic change (this session, and only while the file hasn't changed since), forget one file or everything (resets to the empty template), and turn memory or automatic updates off.
+- Writes are atomic (`.tmp` then move). Missing files are created from the templates.
+
+Until a Claude backend registers `IMemoryModel`, memory is read into prompts but not updated automatically.

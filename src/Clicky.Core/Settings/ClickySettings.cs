@@ -35,6 +35,8 @@ public sealed record ClickySettings
 
     public ClaudeSettings Claude { get; init; } = new();
 
+    public MemorySettings Memory { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -51,6 +53,7 @@ public sealed record ClickySettings
         Voice = (Voice ?? new()).Normalize(),
         Speech = (Speech ?? new()).Normalize(),
         Claude = (Claude ?? new()).Normalize(),
+        Memory = (Memory ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }

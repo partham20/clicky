@@ -7,6 +7,7 @@ using Clicky.Core;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
 using Clicky.Core.Hotkeys;
+using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
 using Clicky.Core.Settings;
 using Clicky.Core.Voice;
@@ -90,6 +91,15 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<VoiceOutput>();
         services.AddSingleton<ReplyPresenter>();
 
+        // Memory is read into every prompt now; updates start once a backend registers IMemoryModel.
+        services.AddSingleton(sp => new MemoryStore(paths.MemoryDirectory, sp.GetRequiredService<ILogger<MemoryStore>>()));
+        services.AddSingleton(sp => new MemoryService(
+            sp.GetRequiredService<MemoryStore>(),
+            sp.GetRequiredService<ISettingsStore>(),
+            sp.GetRequiredService<ILogger<MemoryService>>(),
+            sp.GetService<IMemoryModel>()));
+        services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
@@ -101,6 +111,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
         services.AddTransient<SpeechSettingsView>();
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
+        services.AddTransient<MemorySettingsView>();
+        services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
