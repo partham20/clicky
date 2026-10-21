@@ -6,6 +6,7 @@ using Clicky.App.Views;
 using Clicky.Core;
 using Clicky.Core.Buddy;
 using Clicky.Core.Capture;
+using Clicky.Core.Connectors;
 using Clicky.Core.Hotkeys;
 using Clicky.Core.Memory;
 using Clicky.Core.Secrets;
@@ -16,6 +17,7 @@ using Clicky.Platform.Windows.Capture;
 using Clicky.Platform.Windows.Hotkeys;
 using Clicky.Platform.Windows.Overlay;
 using Clicky.Platform.Windows.Security;
+using Clicky.Platform.Windows.Shell;
 using Clicky.Platform.Windows.SingleInstance;
 using Clicky.Platform.Windows.Speech;
 using Clicky.Platform.Windows.Startup;
@@ -100,6 +102,13 @@ internal static class ServiceCollectionExtensions
             sp.GetService<IMemoryModel>()));
         services.AddSingleton<IMemoryService>(sp => sp.GetRequiredService<MemoryService>());
 
+        // M16 connectors: backends and the agent loop take IConnectorTools.
+        services.AddSingleton<IBrowserLauncher, ShellBrowserLauncher>();
+        services.AddSingleton<ConnectorSecrets>();
+        services.AddSingleton<IMcpSessionFactory, SdkMcpSessionFactory>();
+        services.AddSingleton<ConnectorHub>();
+        services.AddSingleton<IConnectorTools>(sp => sp.GetRequiredService<ConnectorHub>());
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
@@ -113,6 +122,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
         services.AddTransient<MemorySettingsView>();
         services.AddSingleton<Func<MemorySettingsView>>(sp => sp.GetRequiredService<MemorySettingsView>);
+        services.AddTransient<ConnectorsSettingsView>();
+        services.AddSingleton<Func<ConnectorsSettingsView>>(sp => sp.GetRequiredService<ConnectorsSettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
@@ -125,6 +136,7 @@ internal static class ServiceCollectionExtensions
         services.AddHostedService<HotkeyCoordinator>();
         services.AddHostedService<HotkeySettingsBinder>();
         services.AddHostedService<VoiceStartup>();
+        services.AddHostedService<ConnectorStartup>();
 
         return services;
     }

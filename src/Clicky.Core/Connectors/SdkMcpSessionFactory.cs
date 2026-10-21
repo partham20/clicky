@@ -99,8 +99,9 @@ public sealed class SdkMcpSessionFactory(ConnectorSecrets secrets, HttpClient ht
     }
 
     /// <summary>
-    /// A fresh PATH from the registry: Clicky starts at sign-in and keeps the environment it got,
-    /// so Node or Python installed afterwards would otherwise be invisible to npx/uvx until reboot.
+    /// Clicky's PATH plus anything added to the registry PATH since it started: Clicky starts at
+    /// sign-in and keeps the environment it got, so Node or Python installed afterwards would
+    /// otherwise be invisible to npx/uvx until the next sign-in.
     /// </summary>
     internal static string? FreshPath()
     {
@@ -109,14 +110,22 @@ public sealed class SdkMcpSessionFactory(ConnectorSecrets secrets, HttpClient ht
             return null;
         }
 
-        var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine);
-        var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
-        if (string.IsNullOrEmpty(machine) && string.IsNullOrEmpty(user))
+        var current = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var entries = current.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        var known = entries.Select(e => e.TrimEnd('\\')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in new[] { EnvironmentVariableTarget.Machine, EnvironmentVariableTarget.User })
         {
-            return null;
+            var stored = Environment.GetEnvironmentVariable("Path", target);
+            foreach (var entry in Environment.ExpandEnvironmentVariables(stored ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (known.Add(entry.TrimEnd('\\')))
+                {
+                    entries.Add(entry);
+                }
+            }
         }
 
-        return Environment.ExpandEnvironmentVariables(string.Join(';', new[] { machine, user }.Where(p => !string.IsNullOrEmpty(p))));
+        return string.Join(';', entries);
     }
 
     private StdioClientTransport CreateStdioTransport(ConnectorConfig config, ConnectorAccount account, StderrTail stderr)
