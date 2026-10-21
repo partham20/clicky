@@ -31,6 +31,8 @@ public sealed record ClickySettings
 
     public VoiceSettings Voice { get; init; } = new();
 
+    public SpeechSettings Speech { get; init; } = new();
+
     public DebugSettings Debug { get; init; } = new();
 
     public static ClickySettings Default { get; } = new();
@@ -45,6 +47,7 @@ public sealed record ClickySettings
         Hotkeys = (Hotkeys ?? new()).Normalize(),
         Capture = (Capture ?? new()).Normalize(),
         Voice = (Voice ?? new()).Normalize(),
+        Speech = (Speech ?? new()).Normalize(),
         Debug = Debug ?? new(),
     };
 }
@@ -86,7 +89,7 @@ public sealed record DebugSettings
     /// <summary>Also write every screenshot to %AppData%\Clicky\debug\captures, with a crosshair at the pointer.</summary>
     public bool SaveCaptures { get; init; }
 
-    /// <summary>Also write every Talk recording to %AppData%\Clicky\debugudio as a 16 kHz WAV.</summary>
+    /// <summary>Also write every Talk recording to %AppData%\Clicky\debug\audio as a 16 kHz WAV.</summary>
     public bool SaveAudio { get; init; }
 }
 

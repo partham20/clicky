@@ -22,6 +22,9 @@ public sealed class SingleInstanceGuard : IDisposable
 {
     public const string ShowMessage = "show";
 
+    /// <summary>Sent by a second launch with --settings: open Settings instead of Home.</summary>
+    public const string SettingsMessage = "settings";
+
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(2);
 
     private readonly Mutex? _mutex;

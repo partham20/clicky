@@ -7,8 +7,8 @@ An AI cursor buddy for Windows. It looks at your screen when you press a hotkey,
 | Project | Target | Role |
 |---|---|---|
 | `src/Clicky.App` | `net10.0-windows10.0.19041.0`, WPF | Composition root: Generic Host, tray, windows |
-| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, and later prompts, action schema, backends, agent loop. No Windows APIs |
-| `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, and later input, UIA |
+| `src/Clicky.Core` | `net10.0` | Settings, coordinate mapping, buddy state, hotkey gesture engine, audio conversion and speech gate, OpenAI speech-to-text, sentence streaming and the speech pipeline, OpenAI text-to-speech, and later prompts, action schema, backends, agent loop. No Windows APIs |
+| `src/Clicky.Platform.Windows` | `net10.0-windows10.0.19041.0` | Single instance, start with Windows, per-monitor overlays, monitor and cursor info, keyboard hook, screen capture, microphone, Whisper, Credential Manager, speakers, Windows voices, call/share/Focus Assist detection, and later input, UIA |
 | `tests/Clicky.Tests` | `net10.0` | xUnit |
 
 Windows 10 2004 (build 19041) is the floor because overlays need `WDA_EXCLUDEFROMCAPTURE`.
@@ -33,14 +33,15 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 - `capture`: `mode` (`MonitorUnderCursor`, `ForegroundWindow`, `AllMonitors`), `maxLongEdge` (1568), `maxPixels` (1150000), `includeCursor` (false).
 - `voice`: `engine` (`Local` or `Cloud`), `language` (`en`, `hi`, … or `auto`), `localModel` (`large-v3-turbo-q5_0`, used on the GPU), `cpuModel` (`small.en-q5_1`), `useGpu` (true; applies on restart), `cloudModel` (`gpt-4o-mini-transcribe`), `inputDevice` (empty follows the Windows default), `minSpeechMs` (300), `maxRecordingSeconds` (120). Also in Settings › Voice.
 - `debug.saveCaptures`: also write every screenshot to `debug\captures\yyyyMMdd-HHmmss.png`, with a red crosshair where the pointer maps to. Off by default; nothing else writes screenshots to disk.
-- `debug.saveAudio`: also write every Talk recording to `debugudio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
+- `speech`: `quietMode` (false; also in the tray menu), `engine` (`Windows` or `Cloud`), `windowsVoice` (empty uses the Windows default voice), `cloudModel` (`gpt-4o-mini-tts`), `cloudVoice` (`coral`), `rate` (1.0, 0.5 to 2), `volume` (1.0, on top of the Windows volume), `outputDevice` (empty follows the Windows default), `quietInCalls`, `quietWhenSharing`, `quietInFocusAssist` (all true), `ignoreMicApps` (apps that hold the mic without being in a call, e.g. `"NVIDIA Broadcast.exe"`). Also in Settings › Speech.
+- `debug.saveAudio`: also write every Talk recording to `debug\audio\yyyyMMdd-HHmmss.wav` (16 kHz mono). Off by default; nothing else writes audio to disk.
 - Speech models live in `%LocalAppData%\Clicky\models` (not roaming), downloaded on first use and checked against their SHA-256.
 - The OpenAI key for cloud speech-to-text is in Windows Credential Manager as `Clicky/openai-api-key` (Settings › Voice, or the `OPENAI_API_KEY` environment variable for development), never in settings.json.
 - `logs\clicky-YYYYMMDD.log`: daily rolling, 7 days kept, 20 MB cap per file. Level comes from `logging.minimumLevel`.
 
 ## Behaviour notes
 
-- One instance per user per logon session (`Local\` mutex). A second launch asks the running copy to open Home and exits with code 0.
+- One instance per user per logon session (`Local\` mutex). A second launch asks the running copy to open Home (Settings with `--settings`) and exits with code 0.
 - Start with Windows writes `HKCU\...\Run`. If you turn Clicky off in Task Manager's Startup tab, Clicky respects that and switches its own setting off. Under a Velopack install the entry points at the root launcher stub, so updates don't break it.
 - The cursor buddy lives on one transparent overlay per monitor. The overlays are click-through, never take focus, stay out of Alt+Tab and the taskbar, and are excluded from screen capture. They are rebuilt when monitors are added, removed, moved or rescaled.
 - While the pointer is still, the buddy costs a ~30 Hz cursor poll and nothing else. Per-frame work runs only while it is moving or animating a state.
@@ -56,7 +57,7 @@ Everything lives in `%AppData%\Clicky` (override with the `CLICKY_DATA_DIR` envi
 | Open Home | Ctrl+Alt+A | |
 | Always-on voice | Triple-tap Ctrl | Off by default |
 
-Only Talk and Open Home do something yet; the others are logged until their milestones. Talk transcribes what you say (M3) and shows it beside the buddy; sending it to Claude comes in M6.
+Only Talk and Open Home do something yet; the others are logged until their milestones. Talk transcribes what you say (M3) and, until M6 sends it to Claude, says back what it heard (M4).
 
 Gesture text in settings: modifiers alone are a hold (`Ctrl+Alt`), modifiers plus a key are a press (`Ctrl+Alt+A`), and `double`/`triple` prefixes are taps (`double Ctrl`). `hold Ctrl+Space` holds a key. A modifier-only hold needs two modifiers, and a press needs a modifier unless the key is F13-F24, so a binding can't take over normal typing.
 
@@ -89,3 +90,19 @@ Hold Talk, speak, release: the buddy listens (its disc follows your voice), thin
 - **Cloud engine.** OpenAI's transcription endpoint, 16-bit WAV upload, 20 s timeout. The Claude API has no speech-to-text, so this is a second provider.
 - **Problems.** Mic blocked in Windows privacy settings, no mic, a mic unplugged mid-sentence (what was heard is still transcribed), a model still downloading, or a bad API key: each shows in the bubble, as a tray notification (at most once per 10 minutes per message) and in the log.
 - **Bluetooth headsets** switch to their hands-free profile while the mic is open, so their audio drops to call quality during Talk. That is Windows; the laptop's own mic avoids it.
+
+## Voice output (M4)
+
+Replies are spoken sentence by sentence as their text arrives: the buddy shows Speaking, its glow follows the voice, and the sentence being said is its caption. Press Talk while it speaks and it stops (barge-in). Until M6 connects Claude, Talk says back what it heard, and Settings › Speech has a Test voice button.
+
+- **Streaming.** Text is cut into sentences as it streams in (`SentenceSplitter`): at ". ", "! ", "? " and line breaks, but not at "3.14", "v1.2", "docs.claude.com", "e.g.", "Dr.", initials or "1." list numbers. Markdown, links, code blocks, table pipes and emoji are stripped before speaking (`SpeakableText`). Each sentence is synthesized while the one before it plays and queued behind it with a 180 ms pause, so there are no gaps. The look-ahead stops at about two sentences, so barge-in wastes little.
+- **Windows voices** (default): WinRT `SpeechSynthesizer` with the voices installed in Windows, 15-30 ms a sentence once loaded at startup. Windows does not offer its newer natural Narrator voices to apps, so on most PCs these are the classic voices (David, Zira, Mark, Heera, Ravi, …). **Cloud**: OpenAI `gpt-4o-mini-tts`, natural voices, using the same Credential Manager key as cloud speech-to-text; it sends the reply text to OpenAI. The Claude API has no text-to-speech.
+- **Speaker.** WASAPI shared mode in the device's own format, tagged as speech, opened per reply so new headphones apply to the next one. Opening it takes 250 ms to 1 s on Realtek drivers, so it is opened when Talk starts and kept for 15 s if no reply comes. Measured on an i7-13800H laptop: first sound about 30 ms after the first sentence is complete (about 180 ms at the speaker), and barge-in silences the voice within 45-60 ms, with a 15 ms fade so it doesn't click. A device unplugged mid-reply ends that reply with one log line and shows it as text.
+- **Staying quiet.** Before each reply Clicky checks, in about 10 ms, whether to stay quiet. If so, the reply shows as a card by the pointer with a Copy button. The card doesn't take focus, stays out of screenshots and screen shares, and goes away after 8-45 s depending on length (not while the mouse is over it). The reasons, each logged:
+  - Quiet mode is on (tray menu or Settings).
+  - The speakers are muted, at zero, or missing (always).
+  - **A call.** Windows has no "in a call" API. Clicky reads the microphone-in-use list Windows keeps for its privacy icon: another app holding the mic open almost always means a call (Teams, Zoom, Meet in a browser, Discord and Slack keep it open for the whole call, even when muted). An app that holds the mic for other reasons can go in `speech.ignoreMicApps`.
+  - **Screen sharing.** There is no API at all. Most shares happen during a call, which already counts. On top of that, the sharing toolbars of Teams, Zoom, Chrome/Edge ("… is sharing your screen"), Firefox and Slack are recognized by their window titles. Anything else goes undetected; Quiet mode is the manual switch.
+  - **Focus Assist / Do not disturb, presentations, full-screen apps and games.** `SHQueryUserNotificationState` (documented) for presentation mode, full screen and quiet time, plus the shell's own Focus Assist state (undocumented WNF) and Windows 11's Do not disturb setting. Each check fails open, to speaking, if Windows changes underneath it.
+- **Overlays are not full-screen windows.** The shell treats a topmost window the size of the monitor as a full-screen app, so before M4 the buddy's overlays switched on Windows' automatic Focus Assist and reported the user as busy to every app. They now carry the shell's `NonRudeHWND` opt-out.
+- **settings.json** saved as "UTF-8 with BOM" (Notepad and PowerShell can do that) used to count as corrupt; it now loads.

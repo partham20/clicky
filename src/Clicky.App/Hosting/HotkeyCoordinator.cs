@@ -12,16 +12,19 @@ using Microsoft.Extensions.Logging;
 namespace Clicky.App.Hosting;
 
 /// <summary>
-/// What each hotkey does. Talk opens the mic the moment its keys go down (Pending), shows the buddy
-/// listening and takes a screenshot once it arms, and on release turns the speech into text and
-/// shows it beside the buddy. OpenHome opens Home. The rest are logged until their milestones
-/// (text mode M10, dictation M12).
+/// What each hotkey does. Talk opens the mic the moment its keys go down (Pending), which also
+/// stops Clicky if it is speaking (barge-in); it shows the buddy listening and takes a screenshot
+/// once it arms, and on release turns the speech into text. Until M6 sends that to Claude, Clicky
+/// says back what it heard. OpenHome opens Home. The rest are logged until their milestones (text
+/// mode M10, dictation M12).
 /// </summary>
 /// <remarks>Events arrive on the hotkey pump thread, one at a time; nothing here blocks it or the UI thread.</remarks>
 internal sealed class HotkeyCoordinator(
     IHotkeyService hotkeys,
     ICaptureService capture,
     VoiceInput voice,
+    VoiceOutput speech,
+    ReplyPresenter replies,
     IBuddyPresence presence,
     ISettingsStore settings,
     IAppShell shell,
@@ -29,7 +32,6 @@ internal sealed class HotkeyCoordinator(
     Dispatcher dispatcher,
     ILogger<HotkeyCoordinator> logger) : IHostedService, IDisposable
 {
-    private static readonly TimeSpan TranscriptCaptionTime = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan ProblemCaptionTime = TimeSpan.FromSeconds(8);
 
     private readonly CancellationTokenSource _stopping = new();
@@ -64,6 +66,11 @@ internal sealed class HotkeyCoordinator(
         switch (e.Action, e.Phase)
         {
             case (HotkeyAction.Talk, HotkeyPhase.Pending):
+                if (speech.Interrupt())
+                {
+                    logger.LogInformation("Talk: barge-in, stopped speaking");
+                }
+
                 StartListening();
                 break;
 
@@ -73,6 +80,9 @@ internal sealed class HotkeyCoordinator(
                 StartListening();
                 presence.SetCaption(null);
                 presence.SetState(BuddyState.Listening);
+
+                // A reply follows; opening the speaker takes 250 ms or more, so start now.
+                speech.Prepare();
 
                 // The pointer where the user was looking when they pressed, not where it is when the capture runs.
                 PixelPoint? cursor = CursorReader.TryGet(out var position, out _) ? position : null;
@@ -160,18 +170,22 @@ internal sealed class HotkeyCoordinator(
             return;
         }
 
-        presence.SetState(BuddyState.Idle);
         switch (result.Outcome)
         {
             case VoiceOutcome.Transcribed:
-                // M6 sends this, with the screenshot, to Claude. Until then the buddy shows what it heard.
-                ShowCaption($"“{result.Text}”", TranscriptCaptionTime);
+                // M6 sends this, with the screenshot, to Claude. Until then Clicky says back what it heard.
+                replies.Speak($"You said: {result.Text}");
                 break;
 
             case VoiceOutcome.Failed:
+                presence.SetState(BuddyState.Idle);
                 var problem = result.Problem ?? "Something went wrong with speech input.";
                 ShowCaption(problem, ProblemCaptionTime);
                 notifier.Notify(result.MicrophoneProblem is null ? "Clicky couldn't transcribe that" : "Clicky can't hear you", problem, warning: true);
+                break;
+
+            default:
+                presence.SetState(BuddyState.Idle);
                 break;
         }
     }

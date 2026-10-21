@@ -9,10 +9,12 @@ namespace Clicky.App.Hosting;
 /// <summary>
 /// Gets speech-to-text ready in the background at startup (model download, load, GPU warm-up) and
 /// again when settings.voice changes engine or model, and tells the user about the one-time model
-/// download so a first Talk that says "still downloading" is no surprise.
+/// download so a first Talk that says "still downloading" is no surprise. Loads the reply voice
+/// too, at startup and when settings.speech changes engine or voice.
 /// </summary>
 internal sealed class VoiceStartup(
     VoiceInput voice,
+    VoiceOutput speech,
     WhisperSpeechToText whisper,
     ModelDownloader downloader,
     ISettingsStore settings,
@@ -28,6 +30,10 @@ internal sealed class VoiceStartup(
         whisper.DownloadProgressChanged += OnDownloadProgress;
         settings.Changed += OnSettingsChanged;
         WarmUp();
+
+        // Alongside, not after: a first-run model download can take minutes.
+        logger.LogInformation("Reply voice: {Engine}", settings.Current.Speech.Engine);
+        _ = Task.Run(() => speech.WarmUpAsync(_stopping.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 
@@ -48,6 +54,12 @@ internal sealed class VoiceStartup(
         if (AffectsEngine(e.Previous.Voice, e.Current.Voice))
         {
             WarmUp();
+        }
+
+        var (before, after) = (e.Previous.Speech, e.Current.Speech);
+        if (before.Engine != after.Engine || before.WindowsVoice != after.WindowsVoice)
+        {
+            _ = Task.Run(() => speech.WarmUpAsync(_stopping.Token), CancellationToken.None);
         }
     }
 

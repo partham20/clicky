@@ -103,7 +103,7 @@ public sealed class OpenAiSpeechToText(HttpClient http, ISecretStore secrets, IS
         };
     }
 
-    private static string? TryReadErrorMessage(string body)
+    internal static string? TryReadErrorMessage(string body)
     {
         try
         {
@@ -122,14 +122,5 @@ public sealed class OpenAiSpeechToText(HttpClient http, ISecretStore secrets, IS
 
     private static string Truncate(string text) => text.Length <= 500 ? text : text[..500] + "…";
 
-    private string? ApiKey()
-    {
-        var key = secrets.Read(SecretNames.OpenAiApiKey);
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            key = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-        }
-
-        return string.IsNullOrWhiteSpace(key) ? null : key.Trim();
-    }
+    private string? ApiKey() => OpenAiKey.Read(secrets);
 }

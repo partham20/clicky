@@ -22,5 +22,9 @@ internal sealed class ActivationListener(
         {
             await dispatcher.InvokeAsync(shell.ShowHome, DispatcherPriority.Normal, cancellationToken);
         }
+        else if (string.Equals(message, SingleInstanceGuard.SettingsMessage, StringComparison.Ordinal))
+        {
+            await dispatcher.InvokeAsync(shell.ShowSettings, DispatcherPriority.Normal, cancellationToken);
+        }
     }
 }

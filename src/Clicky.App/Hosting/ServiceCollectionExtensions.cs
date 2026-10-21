@@ -80,6 +80,16 @@ internal static class ServiceCollectionExtensions
             : sp.GetRequiredService<WhisperSpeechToText>());
         services.AddSingleton<VoiceInput>();
 
+        services.AddSingleton<ISpeaker, WasapiSpeaker>();
+        services.AddSingleton<WindowsTextToSpeech>();
+        services.AddSingleton<OpenAiTextToSpeech>();
+        services.AddSingleton<Func<VoiceOutputEngine, ITextToSpeech>>(sp => engine => engine == VoiceOutputEngine.Cloud
+            ? sp.GetRequiredService<OpenAiTextToSpeech>()
+            : sp.GetRequiredService<WindowsTextToSpeech>());
+        services.AddSingleton<IQuietDetector, WindowsQuietDetector>();
+        services.AddSingleton<VoiceOutput>();
+        services.AddSingleton<ReplyPresenter>();
+
         // UI-thread objects: resolved on the UI thread by Program (OverlayHost creates an HWND).
         services.AddSingleton<OverlayHost>();
         services.AddSingleton<FloatingBuddy>();
@@ -89,6 +99,8 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<Func<HotkeysSettingsView>>(sp => sp.GetRequiredService<HotkeysSettingsView>);
         services.AddTransient<VoiceSettingsView>();
         services.AddSingleton<Func<VoiceSettingsView>>(sp => sp.GetRequiredService<VoiceSettingsView>);
+        services.AddTransient<SpeechSettingsView>();
+        services.AddSingleton<Func<SpeechSettingsView>>(sp => sp.GetRequiredService<SpeechSettingsView>);
 
         services.AddSingleton<IAppShell, AppShell>();
         services.AddSingleton<TrayViewModel>();
