@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Anthropic" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="ModelContextProtocol.Core" />
   </ItemGroup>
 
   <ItemGroup>
