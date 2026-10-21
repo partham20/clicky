@@ -71,4 +71,5 @@ public sealed record RequestScreenshot(byte[] Png, ScreenshotGeometry Geometry, 
 /// Reference text that goes with this question, between the screen line and the user's words: app
 /// guides from the skills folder (<see cref="Skills.IAppSkills.ContextFor"/>). Null for none.
 /// </param>
-public sealed record ClaudeRequest(string Text, RequestSource Source, RequestScreenshot? Screenshot = null, ModelTier? Tier = null, string? Context = null);
+/// <param name="Step">For an agent step: what the previous reply's actions did.</param>
+public sealed record ClaudeRequest(string Text, RequestSource Source, RequestScreenshot? Screenshot = null, ModelTier? Tier = null, string? Context = null, AgentStep? Step = null);

@@ -2,7 +2,10 @@ namespace Clicky.Core.Assistant;
 
 /// <summary>A tool call the model made, kept so the next request can answer it.</summary>
 /// <param name="InputJson">The tool input exactly as the model sent it.</param>
-public sealed record ToolCallRecord(string Id, string Name, string InputJson);
+/// <param name="Accepted">False when the input failed validation and the action was dropped.</param>
+/// <param name="Error">Why it was dropped, for the tool result.</param>
+/// <param name="ToolsetName">The Anthropic toolset the call belongs to ("computer"), echoed on its result.</param>
+public sealed record ToolCallRecord(string Id, string Name, string InputJson, bool Accepted = true, string? Error = null, string? ToolsetName = null);
 
 /// <summary>
 /// A thinking block from the Messages API, passed back unchanged on later requests: the API needs
@@ -20,6 +23,10 @@ public sealed record ThinkingRecord(string Thinking, string? Signature, string? 
 /// <param name="ToolCalls">Tool calls (API backend only), answered at the start of the next request.</param>
 /// <param name="Interrupted">The user cut the reply off; the text is what was said up to then.</param>
 /// <param name="Thinking">Thinking blocks that came before the text (API backend only).</param>
+/// <param name="Results">
+/// What the previous turn's tool calls did, sent with this turn (agent steps); calls without one
+/// get <see cref="DefaultToolResults"/>.
+/// </param>
 public sealed record ConversationTurn(
     string UserText,
     byte[]? Screenshot,
@@ -27,7 +34,8 @@ public sealed record ConversationTurn(
     IReadOnlyList<ToolCallRecord> ToolCalls,
     DateTimeOffset At,
     bool Interrupted = false,
-    IReadOnlyList<ThinkingRecord>? Thinking = null);
+    IReadOnlyList<ThinkingRecord>? Thinking = null,
+    IReadOnlyList<ToolOutcome>? Results = null);
 
 /// <summary>How much history is sent back.</summary>
 /// <param name="MaxTurns">Turns kept after a trim.</param>
@@ -120,13 +128,42 @@ public sealed class Conversation(TimeProvider? time = null, string? memory = nul
         }
     }
 
+    /// <summary>
+    /// Results of the last turn's tool calls that ran but were never sent (the agent stopped, or the
+    /// model said done along with them), so the next request reports them truthfully instead of "not
+    /// run". Cleared by the next <see cref="Append"/>.
+    /// </summary>
+    public IReadOnlyList<ToolOutcome>? UnsentResults
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return field;
+            }
+        }
+
+        private set;
+    }
+
     public bool IsIdle(TimeSpan idle) => _time.GetUtcNow() - LastActivity >= idle;
+
+    /// <summary>Keeps results the agent couldn't send (see <see cref="UnsentResults"/>).</summary>
+    public void KeepUnsentResults(IReadOnlyList<ToolOutcome> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        lock (_gate)
+        {
+            UnsentResults = results.Count > 0 ? results : null;
+        }
+    }
 
     public void Append(ConversationTurn turn, HistoryLimits limits)
     {
         ArgumentNullException.ThrowIfNull(turn);
         lock (_gate)
         {
+            UnsentResults = null;
             _turns.Add(turn);
             var changed = false;
             if (_turns.Count >= limits.MaxTurns + limits.TrimSlack)

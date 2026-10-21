@@ -16,7 +16,9 @@
     { "$ref": "#/$defs/scroll" },
     { "$ref": "#/$defs/wait" },
     { "$ref": "#/$defs/ask_permission" },
-    { "$ref": "#/$defs/done" }
+    { "$ref": "#/$defs/done" },
+    { "$ref": "#/$defs/open_url" },
+    { "$ref": "#/$defs/use_tool" }
   ],
   "$defs": {
     "say": {
@@ -125,7 +127,8 @@
       "description": "Press a key or shortcut, e.g. \"Enter\", \"Ctrl+S\", \"Alt+Tab\".",
       "properties": {
         "type": { "const": "key" },
-        "keys": { "type": "string", "minLength": 1, "maxLength": 64 }
+        "keys": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "repeat": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Press it this many times, e.g. 3 for Tab Tab Tab." }
       },
       "required": ["type", "keys"],
       "additionalProperties": false
@@ -174,6 +177,27 @@
         "success": { "type": "boolean" }
       },
       "required": ["type"],
+      "additionalProperties": false
+    },
+    "open_url": {
+      "type": "object",
+      "description": "Open a web page in Clicky's own browser window (a separate Chrome profile the user can sign in to). Use it instead of clicking through a browser to reach a page. Only http and https addresses.",
+      "properties": {
+        "type": { "const": "open_url" },
+        "url": { "type": "string", "minLength": 1, "maxLength": 2048, "description": "The full address, e.g. \"https://github.com/notifications\"." }
+      },
+      "required": ["type", "url"],
+      "additionalProperties": false
+    },
+    "use_tool": {
+      "type": "object",
+      "description": "Call one of the user's connected app tools, listed in the conversation with their input schemas. Clicky asks the user first when a tool can change anything, and sends you back its result.",
+      "properties": {
+        "type": { "const": "use_tool" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The tool's exact name, e.g. \"github__create_issue\"." },
+        "input": { "type": "object", "description": "The tool's arguments, matching its input schema." }
+      },
+      "required": ["type", "name", "input"],
       "additionalProperties": false
     }
   }
