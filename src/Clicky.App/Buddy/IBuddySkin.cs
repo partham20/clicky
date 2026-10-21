@@ -29,7 +29,7 @@ public interface IBuddyVisual
     /// </summary>
     BuddyState State { get; set; }
 
-    /// <summary>Mic level 0..1, shown while <see cref="State"/> is Listening.</summary>
+    /// <summary>Mic level 0..1 while <see cref="State"/> is Listening, voice level while Speaking.</summary>
     float Level { get; set; }
 
     /// <summary>Text in a bubble beside the buddy, or null for none.</summary>

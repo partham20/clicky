@@ -9,7 +9,8 @@
   <!--
     64x64 DIP box. The arrow tip sits at (24,24); its body centre is about (29.5,33), which the ring,
     glow and orbit are centred on. Colours match Assets/clicky.ico (#2563EB on white).
-    Idle has no storyboard, so a still buddy costs no frames.
+    Idle and Speaking have no storyboard: a still buddy costs no frames, and a speaking one only
+    renders when the voice level changes (about 20 times a second).
   -->
   <UserControl.RenderTransform>
     <TranslateTransform x:Name="Translate" />
@@ -47,21 +48,12 @@
           </Storyboard>
         </VisualState>
 
-        <VisualState x:Name="Speaking">
-          <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-            <DoubleAnimation Storyboard.TargetName="Glow" Storyboard.TargetProperty="Opacity" From="0.35" To="0.9" Duration="0:0:0.45">
-              <DoubleAnimation.EasingFunction>
-                <SineEase EasingMode="EaseInOut" />
-              </DoubleAnimation.EasingFunction>
-            </DoubleAnimation>
-            <DoubleAnimation Storyboard.TargetName="ArrowScale" Storyboard.TargetProperty="ScaleX" From="1" To="1.08" Duration="0:0:0.45" />
-            <DoubleAnimation Storyboard.TargetName="ArrowScale" Storyboard.TargetProperty="ScaleY" From="1" To="1.08" Duration="0:0:0.45" />
-          </Storyboard>
-        </VisualState>
+        <!-- Speaking: the glow and the arrow follow the voice (driven from code, like the listening disc). -->
+        <VisualState x:Name="Speaking" />
       </VisualStateGroup>
     </VisualStateManager.VisualStateGroups>
 
-    <!-- Speaking: soft glow behind the arrow. -->
+    <!-- Speaking: soft glow behind the arrow that follows the voice. -->
     <Ellipse
         x:Name="Glow"
         Canvas.Left="9.5"

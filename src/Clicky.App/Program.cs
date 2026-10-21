@@ -28,7 +28,8 @@ public static class Program
         if (!instance.IsPrimary)
         {
             ForegroundRights.GrantToAnyProcess();
-            instance.TrySignalPrimary(SingleInstanceGuard.ShowMessage, TimeSpan.FromSeconds(2));
+            var message = args.Contains("--settings", StringComparer.OrdinalIgnoreCase) ? SingleInstanceGuard.SettingsMessage : SingleInstanceGuard.ShowMessage;
+            instance.TrySignalPrimary(message, TimeSpan.FromSeconds(2));
             return 0;
         }
 

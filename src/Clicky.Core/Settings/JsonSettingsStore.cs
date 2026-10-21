@@ -313,7 +313,14 @@ public sealed class JsonSettingsStore : ISettingsStore, IDisposable
     {
         try
         {
-            var parsed = JsonSerializer.Deserialize(bytes, SettingsJsonContext.Default.ClickySettings);
+            // Notepad and PowerShell can save "UTF-8 with BOM"; the JSON reader rejects the BOM.
+            var json = bytes.AsSpan();
+            if (json.StartsWith("﻿"u8))
+            {
+                json = json[3..];
+            }
+
+            var parsed = JsonSerializer.Deserialize(json, SettingsJsonContext.Default.ClickySettings);
             if (parsed is null)
             {
                 settings = ClickySettings.Default;

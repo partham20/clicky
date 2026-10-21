@@ -89,7 +89,7 @@ public sealed record DebugSettings
     /// <summary>Also write every screenshot to %AppData%\Clicky\debug\captures, with a crosshair at the pointer.</summary>
     public bool SaveCaptures { get; init; }
 
-    /// <summary>Also write every Talk recording to %AppData%\Clicky\debugudio as a 16 kHz WAV.</summary>
+    /// <summary>Also write every Talk recording to %AppData%\Clicky\debug\audio as a 16 kHz WAV.</summary>
     public bool SaveAudio { get; init; }
 }
 

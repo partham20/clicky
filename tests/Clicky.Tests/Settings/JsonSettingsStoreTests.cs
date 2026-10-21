@@ -94,6 +94,18 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_file_saved_as_utf8_with_bom_loads_instead_of_being_quarantined()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(SettingsPath, """{ "general": { "startWithWindows": true } }""", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+
+        var store = Open();
+
+        Assert.True(store.Current.General.StartWithWindows);
+        Assert.Empty(Directory.GetFiles(_dir, "*.bad"));
+    }
+
+    [Fact]
     public void M0_file_without_overlay_section_gets_overlay_defaults()
     {
         Directory.CreateDirectory(_dir);

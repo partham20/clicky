@@ -14,10 +14,10 @@ public interface IBuddyPresence
 
     void SetState(BuddyState state);
 
-    /// <summary>Microphone level 0..1 while listening, else 0. Safe to read from any thread.</summary>
+    /// <summary>Microphone level 0..1 while listening, voice level while speaking, else 0. Safe to read from any thread.</summary>
     float Level { get; }
 
-    /// <summary>Raised on the calling thread, up to ~20 times a second while listening.</summary>
+    /// <summary>Raised on the calling thread, up to ~20 times a second while listening or speaking.</summary>
     event EventHandler? LevelChanged;
 
     /// <summary>Clamped to 0..1.</summary>

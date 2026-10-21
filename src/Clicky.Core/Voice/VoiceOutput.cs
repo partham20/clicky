@@ -44,6 +44,12 @@ public sealed class VoiceOutput : IDisposable
     /// <summary>Pause between two sentences; synthesized clips have their own silence trimmed off.</summary>
     public static readonly TimeSpan SentenceGap = TimeSpan.FromMilliseconds(180);
 
+    /// <summary>
+    /// After the last sample has gone to the device, it still has to come out of the speakers
+    /// (device buffer plus driver latency); closing the stream at once would clip the last syllable.
+    /// </summary>
+    public static readonly TimeSpan EndTail = TimeSpan.FromMilliseconds(150);
+
     private readonly Lock _gate = new();
     private SpokenReply? _current;
 
@@ -486,6 +492,11 @@ public sealed class SpokenReply : IDisposable
             }
 
             var interrupted = Volatile.Read(ref _interrupted) != 0;
+            if (!interrupted)
+            {
+                await Task.Delay(VoiceOutput.EndTail, _owner.Time).ConfigureAwait(false);
+            }
+
             result = new ReplyResult(interrupted ? ReplyOutcome.Interrupted : ReplyOutcome.Spoken, Text, QuietReasons.None, null, _sentenceCount, firstAudio);
             logger.LogInformation(
                 "Speech: {Outcome} {Sentences} sentence(s) on {Device} with {Engine}; first audio {FirstMs:0} ms after the first sentence, synthesis {SynthMs:0} ms total, gaps {GapMs:0} ms",

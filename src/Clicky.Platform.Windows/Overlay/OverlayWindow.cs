@@ -90,6 +90,15 @@ public sealed class OverlayWindow : Window
             _logger.LogWarning("Could not exclude overlay on {Monitor} from capture (error {Error})", Monitor.DeviceName, Marshal.GetLastPInvokeError());
         }
 
+        // A topmost window the size of the monitor is what the shell calls a "rude" (full-screen)
+        // window: it would turn on Windows' automatic Focus Assist, report the user as busy to every
+        // app asking SHQueryUserNotificationState, and make Clicky itself stay quiet. This property is
+        // the shell's own opt-out.
+        if (!SetProp(_hwnd, "NonRudeHWND", 1))
+        {
+            _logger.LogWarning("Could not mark overlay on {Monitor} as not full-screen (error {Error})", Monitor.DeviceName, Marshal.GetLastPInvokeError());
+        }
+
         HwndSource.FromHwnd(_hwnd)?.AddHook(_hook);
 
         var bounds = Monitor.Bounds;

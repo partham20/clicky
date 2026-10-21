@@ -108,11 +108,19 @@ public partial class PointerBuddy : UserControl, IBuddyVisual
     private void ApplyState(bool useTransitions) =>
         VisualStateManager.GoToElementState(LayoutRoot, _state.ToString(), useTransitions);
 
-    /// <summary>A solid disc behind the arrow that swells with the voice; the pulsing ring keeps going regardless.</summary>
+    /// <summary>
+    /// Listening: a solid disc behind the arrow that swells with the voice; the pulsing ring keeps
+    /// going regardless. Speaking: the glow brightens and the arrow grows a little with the voice.
+    /// </summary>
     private void ApplyLevel()
     {
-        var level = _state == BuddyState.Listening ? _level : 0f;
-        LevelDisc.Opacity = level < 0.05f ? 0 : 0.15 + (0.35 * level);
-        LevelScale.ScaleX = LevelScale.ScaleY = 0.6 + (0.6 * level);
+        var listening = _state == BuddyState.Listening ? _level : 0f;
+        LevelDisc.Opacity = listening < 0.05f ? 0 : 0.15 + (0.35 * listening);
+        LevelScale.ScaleX = LevelScale.ScaleY = 0.6 + (0.6 * listening);
+
+        var speaking = _state == BuddyState.Speaking;
+        var voice = speaking ? _level : 0f;
+        Glow.Opacity = speaking ? 0.3 + (0.6 * voice) : 0;
+        ArrowScale.ScaleX = ArrowScale.ScaleY = 1 + (0.1 * voice);
     }
 }

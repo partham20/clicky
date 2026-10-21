@@ -37,6 +37,9 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial bool HideFloatingCursor { get; set; }
 
+    [ObservableProperty]
+    public partial bool QuietMode { get; set; }
+
     public BuddyState BuddyState => _presence.State;
 
     public void Dispose() => _settings.Changed -= OnSettingsChanged;
@@ -59,6 +62,14 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
         if (!_syncing)
         {
             _ = PersistAsync("start with Windows", value, s => s with { General = s.General with { StartWithWindows = value } });
+        }
+    }
+
+    partial void OnQuietModeChanged(bool value)
+    {
+        if (!_syncing)
+        {
+            _ = PersistAsync("quiet mode", value, s => s with { Speech = s.Speech with { QuietMode = value } });
         }
     }
 
@@ -93,6 +104,7 @@ public sealed partial class TrayViewModel : ObservableObject, IDisposable
         {
             StartWithWindows = settings.General.StartWithWindows;
             HideFloatingCursor = settings.Overlay.HideFloatingCursor;
+            QuietMode = settings.Speech.QuietMode;
         }
         finally
         {

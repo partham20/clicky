@@ -71,6 +71,10 @@ public sealed class TrayIconService(TrayViewModel viewModel) : IDisposable
         hideFloatingCursor.SetBinding(MenuItem.IsCheckedProperty, new Binding(nameof(TrayViewModel.HideFloatingCursor)) { Mode = BindingMode.TwoWay });
         menu.Items.Add(hideFloatingCursor);
 
+        var quietMode = new MenuItem { Header = "Quiet mode (show replies as text)", IsCheckable = true };
+        quietMode.SetBinding(MenuItem.IsCheckedProperty, new Binding(nameof(TrayViewModel.QuietMode)) { Mode = BindingMode.TwoWay });
+        menu.Items.Add(quietMode);
+
         menu.Items.Add(BuildBuddyStatePreviewMenu());
 
         menu.Items.Add(new Separator());
