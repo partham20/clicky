@@ -139,6 +139,80 @@ public sealed class LocalVoiceTests : IDisposable
     }
 
     [Fact]
+    public void A_gpu_check_from_an_older_check_is_run_again()
+    {
+        Directory.CreateDirectory(_directory);
+        File.WriteAllLines(Path.Combine(_directory, LocalVoiceGpu.CheckFile), ["failed", "the check crashed (exit code 0xC0000409): [m"]);
+        Assert.Null(LocalVoiceGpu.ReadCheck(_directory));
+    }
+
+    [Fact]
+    public void A_crashed_gpu_check_names_the_onnx_runtime_error_without_colour_codes()
+    {
+        // What ONNX Runtime writes before sherpa-onnx lets its exception abort the process: the
+        // error in red, its message ending in a newline, then the colour reset on a line of its own.
+        var stderr = "Found: NVIDIA GeForce RTX 4070 Laptop GPU (compute 8.9)\r\n"
+            + "\u001b[0;93m2026-10-23 03:20:11.5 [W:onnxruntime:, session_state.cc:1280 onnxruntime::VerifyEachNodeIsAssignedToAnEp] Some nodes were not assigned\u001b[m\r\n"
+            + "\u001b[1;31m2026-10-23 03:20:11.6 [E:onnxruntime:Default, provider_bridge_ort.cc:2281 onnxruntime::TryGetProviderInfo_CUDA] "
+            + @"D:\a\_work\1\s\onnxruntime\core\session\provider_bridge_ort.cc:1778 onnxruntime::ProviderLibrary::Get [ONNXRuntimeError] : 1 : FAIL : "
+            + @"Error loading ""C:\Users\partha\AppData\Local\Clicky\models\voices\sherpa-onnx-v1.13.8-cuda12\onnxruntime_providers_cuda.dll"" which depends on ""cublasLt64_12.dll"" which is missing. (Error 126: ""The specified module could not be found."")"
+            + "\r\n\u001b[m\r\n";
+
+        var detail = LocalVoiceGpu.DescribeCrash(unchecked((int)0xC0000409), stderr);
+
+        Assert.Equal(
+            @"the GPU runtime stopped the check (exit code 0xC0000409): Error loading ""onnxruntime_providers_cuda.dll"" which depends on ""cublasLt64_12.dll"" which is missing. (Error 126: ""The specified module could not be found."")",
+            detail);
+        Assert.DoesNotContain("[m", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_crashed_gpu_check_without_output_says_only_what_the_exit_code_means()
+    {
+        Assert.Equal("the GPU runtime stopped the check (exit code 0xC0000409)", LocalVoiceGpu.DescribeCrash(unchecked((int)0xC0000409), "\u001b[m\r\n"));
+        Assert.Equal("the check stopped (exit code 0x00000001)", LocalVoiceGpu.DescribeCrash(1, string.Empty));
+    }
+
+    [Theory]
+    [InlineData(6, 1, true)] // GTX 10
+    [InlineData(7, 5, true)] // GTX 16, RTX 20
+    [InlineData(8, 6, true)] // RTX 30, RTX A1000
+    [InlineData(8, 9, true)] // RTX 40
+    [InlineData(12, 0, true)] // RTX 50
+    [InlineData(13, 0, true)] // newer, through PTX
+    [InlineData(5, 2, false)]
+    [InlineData(7, 0, false)]
+    [InlineData(8, 0, false)]
+    public void The_gpu_runtime_knows_which_gpus_it_has_code_for(int major, int minor, bool runs) =>
+        Assert.Equal(runs, LocalVoiceGpuPreflight.Runs(major, minor));
+
+    [Fact]
+    public void The_gpu_check_reads_what_a_dll_imports()
+    {
+        // Every IL-only assembly imports _CorDllMain from mscoree.dll.
+        var imports = LocalVoiceGpuPreflight.ReadImports(typeof(LocalVoiceGpu).Assembly.Location);
+        Assert.Contains(imports, i => i.Library.Equals("mscoree.dll", StringComparison.OrdinalIgnoreCase) && i.Functions.Contains("_CorDllMain"));
+
+        // And a native 64-bit one, like the CUDA provider.
+        if (OperatingSystem.IsWindows())
+        {
+            var kernel = LocalVoiceGpuPreflight.ReadImports(Path.Combine(Environment.SystemDirectory, "kernel32.dll"));
+            Assert.Contains(kernel, i => i.Library.Equals("ntdll.dll", StringComparison.OrdinalIgnoreCase) && i.Functions.Count > 10);
+        }
+    }
+
+    [Fact]
+    public void The_gpu_check_names_what_is_missing_without_nvidia_software()
+    {
+        // CI has no NVIDIA libraries: the check says so instead of going on to load the CUDA build.
+        Directory.CreateDirectory(_directory);
+        var problem = LocalVoiceGpuPreflight.FindProblem(_directory, out _);
+        Assert.NotNull(problem);
+        Assert.StartsWith("Not found on this PC:", problem, StringComparison.Ordinal);
+        Assert.Contains("cuDNN 9", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_gpu_runtime_keeps_only_the_dlls_it_needs()
     {
         var map = LocalVoiceModels.CudaRuntime.MapEntry;
