@@ -58,10 +58,10 @@ internal sealed class LocalVoiceGpuProbe(ILogger<LocalVoiceGpuProbe> logger) : I
         }
 
         var line = (await output.ConfigureAwait(false)).Trim().Split('\n').LastOrDefault()?.Trim() ?? string.Empty;
-        var stderr = (await errors.ConfigureAwait(false)).Trim();
+        var stderr = LocalVoiceGpu.WithoutColours(await errors.ConfigureAwait(false)).Trim();
         if (stderr.Length > 0)
         {
-            logger.LogInformation("GPU voice check output: {Errors}", stderr.Length <= 2000 ? stderr : stderr[^2000..]);
+            logger.LogInformation("GPU voice check output: {Errors}", stderr.Length <= 4000 ? stderr : stderr[^4000..]);
         }
 
         if (process.ExitCode == 0)
@@ -69,9 +69,7 @@ internal sealed class LocalVoiceGpuProbe(ILogger<LocalVoiceGpuProbe> logger) : I
             return new LocalVoiceGpuCheck(true, line);
         }
 
-        var detail = line.Length > 0
-            ? line
-            : $"the check crashed (exit code 0x{process.ExitCode:X8}){(stderr.Length > 0 ? ": " + stderr.Split('\n')[^1].Trim() : string.Empty)}";
+        var detail = line.Length > 0 ? line : LocalVoiceGpu.DescribeCrash(process.ExitCode, stderr);
         return new LocalVoiceGpuCheck(false, detail);
     }
 }

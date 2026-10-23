@@ -33,7 +33,7 @@ public static class Program
         if (args is [LocalVoiceGpu.ProbeSwitch, var runtimeFolder, var modelFolder])
         {
             ProcessErrorMode.SuppressCrashDialogs();
-            return LocalVoiceGpu.Probe(runtimeFolder, modelFolder, Console.Out);
+            return LocalVoiceGpu.Probe(runtimeFolder, modelFolder, Console.Out, Console.Error);
         }
 
         // First, before anything touches disk or UI: Velopack's install/update/uninstall hooks run

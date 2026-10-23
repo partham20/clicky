@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using SherpaOnnx;
 
 namespace Clicky.Core.Voice;
@@ -29,13 +30,16 @@ public interface ILocalVoiceGpuProbe
 /// <para>The native library is chosen once per process, before the first call into sherpa-onnx;
 /// switching between CPU and GPU applies on the next start.</para>
 /// </remarks>
-public static class LocalVoiceGpu
+public static partial class LocalVoiceGpu
 {
     /// <summary>Command-line switch for the child process that runs <see cref="Probe"/>.</summary>
     public const string ProbeSwitch = "--probe-voice-gpu";
 
-    /// <summary>File in the runtime folder recording the last check: "ok" or "failed", then the detail.</summary>
+    /// <summary>File in the runtime folder recording the last check: "ok" or "failed", the detail, then <see cref="CheckVersion"/>.</summary>
     public const string CheckFile = "gpu-check.txt";
+
+    // Raise when the check changes: a result from an older check is then not trusted.
+    private const string CheckVersion = "check 2";
 
     private const string NativeLibraryName = "sherpa-onnx-c-api";
 
@@ -85,13 +89,16 @@ public static class LocalVoiceGpu
         }
     }
 
-    /// <summary>The last check recorded in <paramref name="runtimeFolder"/>, if any.</summary>
+    /// <summary>
+    /// The last check recorded in <paramref name="runtimeFolder"/>, if any. One recorded by an older
+    /// check doesn't count, so an update that changes the check runs it again.
+    /// </summary>
     public static LocalVoiceGpuCheck? ReadCheck(string runtimeFolder)
     {
         try
         {
             var lines = File.ReadAllLines(Path.Combine(runtimeFolder, CheckFile));
-            return lines.Length == 0 ? null : new LocalVoiceGpuCheck(lines[0] == "ok", lines.Length > 1 ? lines[1] : string.Empty);
+            return lines is [var result, var detail, CheckVersion, ..] ? new LocalVoiceGpuCheck(result == "ok", detail) : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -100,7 +107,7 @@ public static class LocalVoiceGpu
     }
 
     public static void WriteCheck(string runtimeFolder, LocalVoiceGpuCheck check) =>
-        File.WriteAllLines(Path.Combine(runtimeFolder, CheckFile), [check.Works ? "ok" : "failed", check.Detail.ReplaceLineEndings(" ")]);
+        File.WriteAllLines(Path.Combine(runtimeFolder, CheckFile), [check.Works ? "ok" : "failed", check.Detail.ReplaceLineEndings(" "), CheckVersion]);
 
     public static void ForgetCheck(string runtimeFolder)
     {
@@ -114,26 +121,44 @@ public static class LocalVoiceGpu
     }
 
     /// <summary>
-    /// The check itself, run in the child process: load the CUDA build, speak a sentence on the GPU
-    /// and confirm ONNX Runtime really loaded its CUDA provider rather than falling back to the CPU.
-    /// Writes one line to standard output; exit code 0 if it works.
+    /// The check itself, run in the child process: check the NVIDIA pieces (see
+    /// <see cref="LocalVoiceGpuPreflight"/>), then load the CUDA build, speak a sentence on the GPU and
+    /// confirm ONNX Runtime really loaded its CUDA provider rather than falling back to the CPU.
+    /// Writes one line to <paramref name="output"/> and what it found (GPU, versions) to
+    /// <paramref name="log"/>; exit code 0 if it works.
     /// </summary>
-    public static int Probe(string runtimeFolder, string modelFolder, TextWriter output)
+    public static int Probe(string runtimeFolder, string modelFolder, TextWriter output, TextWriter log)
     {
         ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(log);
+        try
+        {
+            return RunProbe(runtimeFolder, modelFolder, output, log);
+        }
+        catch (Exception ex)
+        {
+            output.WriteLine($"The check failed: {ex.GetType().Name}: {ex.Message}".ReplaceLineEndings(" "));
+            return 3;
+        }
+    }
+
+    private static int RunProbe(string runtimeFolder, string modelFolder, TextWriter output, TextWriter log)
+    {
         if (!UseFolder(runtimeFolder, cpuAlreadyLoaded: false))
         {
             output.WriteLine("Could not select the GPU runtime.");
             return 3;
         }
 
-        var missing = new[] { ("cudart64_12.dll", "the CUDA 12 runtime"), ("cublasLt64_12.dll", "cuBLAS from CUDA 12"), ("cudnn64_9.dll", "cuDNN 9") }
-            .Where(d => !CanLoad(d.Item1))
-            .Select(d => d.Item2)
-            .ToList();
-        if (missing.Count > 0)
+        var problem = LocalVoiceGpuPreflight.FindProblem(runtimeFolder, out var found);
+        if (found.Length > 0)
         {
-            output.WriteLine($"Not found on this PC: {string.Join(", ", missing)}. Install them from NVIDIA, then try again.");
+            log.WriteLine(FoundPrefix + found);
+        }
+
+        if (problem is not null)
+        {
+            output.WriteLine(problem);
             return 2;
         }
 
@@ -173,16 +198,68 @@ public static class LocalVoiceGpu
         return 0;
     }
 
-    private static bool CanLoad(string library)
+    /// <summary>
+    /// One line for a check that ended without saying why (ONNX Runtime aborted it): what the exit
+    /// code means, and the last error ONNX Runtime or sherpa-onnx wrote to standard error.
+    /// </summary>
+    public static string DescribeCrash(int exitCode, string errorOutput)
     {
-        if (!NativeLibrary.TryLoad(library, out var handle))
+        var code = unchecked((uint)exitCode);
+        var what = code switch
         {
-            return false;
+            // abort(), which is where an exception nobody catches in native code ends up.
+            0xC0000409 => "the GPU runtime stopped the check",
+            0xC0000005 => "the GPU runtime crashed",
+            0xE0434352 => "the check crashed",
+            _ => "the check stopped",
+        };
+        var detail = $"{what} (exit code 0x{code:X8})";
+        return LastError(errorOutput) is { } error ? $"{detail}: {error}" : detail;
+    }
+
+    /// <summary>Native standard error without the terminal colour codes ONNX Runtime puts in it.</summary>
+    public static string WithoutColours(string text) => AnsiCode().Replace(text ?? string.Empty, string.Empty);
+
+    /// <summary>The last error in a native library's standard error, without colour codes, log prefixes or source locations.</summary>
+    internal static string? LastError(string errorOutput)
+    {
+        var lines = WithoutColours(errorOutput)
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => !l.StartsWith(FoundPrefix, StringComparison.Ordinal) && l.Any(char.IsLetter))
+            .ToList();
+        var line = lines.LastOrDefault(l => l.Contains("[E:onnxruntime", StringComparison.Ordinal) || l.Contains("[F:onnxruntime", StringComparison.Ordinal))
+            ?? lines.LastOrDefault(l => l.Contains("error", StringComparison.OrdinalIgnoreCase) || l.Contains("fail", StringComparison.OrdinalIgnoreCase))
+            ?? lines.LastOrDefault();
+        if (line is null)
+        {
+            return null;
         }
 
-        NativeLibrary.Free(handle);
-        return true;
+        line = OrtNoise().Replace(line, string.Empty);
+        line = DllPath().Replace(line, "\"$1\"");
+        line = Spaces().Replace(line, " ").Trim();
+        return line.Length <= 400 ? line : line[..399] + "…";
     }
+
+    // The start of the line Probe writes to standard error about what it found.
+    private const string FoundPrefix = "Found: ";
+
+    // Terminal colour codes: ONNX Runtime colours its log and ends each entry with ESC[m.
+    [GeneratedRegex(@"\x1B\[[0-9;?]*[A-Za-z]")]
+    private static partial Regex AnsiCode();
+
+    // "2026-10-23 03:20:11.6 [E:onnxruntime:Default, provider_bridge_ort.cc:2281 onnxruntime::TryGetProviderInfo_CUDA] ",
+    // "D:\a\_work\1\s\onnxruntime\core\session\provider_bridge_ort.cc:1778 onnxruntime::ProviderLibrary::Get "
+    // and "[ONNXRuntimeError] : 1 : FAIL : ".
+    [GeneratedRegex(@"^.*?\[[A-Z]:onnxruntime:[^\]]*\]\s*|(?:[A-Za-z]:)?[\\/][^\s""]*\.(?:cc|cpp|h):\d+\s+\S+\s*|\[ONNXRuntimeError\]\s*:\s*\d+\s*:\s*\w+\s*:\s*")]
+    private static partial Regex OrtNoise();
+
+    // A quoted full path to a DLL: keep its file name.
+    [GeneratedRegex(@"""(?:[A-Za-z]:)?[\\/][^""]*[\\/]([^""\\/]+)""")]
+    private static partial Regex DllPath();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex Spaces();
 
     private static IntPtr Resolve(string name, Assembly assembly, DllImportSearchPath? searchPath)
     {
