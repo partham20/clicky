@@ -101,14 +101,15 @@ internal static class LocalVoiceGpuPreflight
             return gpuProblem;
         }
 
-        // Last, with every NVIDIA piece in place: the provider itself, which names the exact
-        // function an older CUDA or Visual C++ runtime lacks.
+        // Last, with every NVIDIA piece in place: what the CUDA provider imports, which names the
+        // exact function an older CUDA or Visual C++ runtime lacks. Only read, never loaded here:
+        // its start-up code needs the host ONNX Runtime hands it first, and without that Windows
+        // fails the load with error 1114 even when everything is in place.
         foreach (var file in new[] { "onnxruntime.dll", ProviderFile })
         {
-            var path = Path.Combine(runtimeFolder, file);
-            if (!NativeLibrary.TryLoad(path, out _))
+            if (LoadProblem(Path.Combine(runtimeFolder, file)) is { } problem)
             {
-                return LoadProblem(path);
+                return problem;
             }
         }
 
@@ -188,21 +189,26 @@ internal static class LocalVoiceGpuPreflight
     internal static bool Runs(int major, int minor) =>
         Kernels.Any(k => k.Major == major && k.Minor <= minor) || (major, minor).CompareTo(Ptx) >= 0;
 
-    /// <summary>Why <paramref name="path"/> doesn't load: a library it needs is missing, or is too old to have a function it uses.</summary>
-    private static string LoadProblem(string path)
+    /// <summary>
+    /// Why <paramref name="path"/> wouldn't load, if a library it needs (directly or through another
+    /// non-Windows library) is missing or too old to have a function it uses; null if none is.
+    /// </summary>
+    private static string? LoadProblem(string path)
     {
         var file = Path.GetFileName(path);
-        List<(string Library, List<string> Functions)> imports;
         try
         {
-            imports = ReadImports(path);
+            return MissingPiece(path, file, new HashSet<string>(StringComparer.OrdinalIgnoreCase), depth: 0);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
         {
-            return $"{file} could not be loaded ({ex.Message}). Delete the GPU runtime folder so Clicky downloads it again.";
+            return $"{file} could not be read ({ex.Message}). Delete the GPU runtime folder so Clicky downloads it again.";
         }
+    }
 
-        foreach (var (library, functions) in imports)
+    private static string? MissingPiece(string path, string file, HashSet<string> seen, int depth)
+    {
+        foreach (var (library, functions) in ReadImports(path))
         {
             if (library.StartsWith("api-ms-", StringComparison.OrdinalIgnoreCase) || library.StartsWith("ext-ms-", StringComparison.OrdinalIgnoreCase))
             {
@@ -215,16 +221,24 @@ internal static class LocalVoiceGpuPreflight
                 return $"{file} needs {library}, which could not be loaded. {Fix(library)}";
             }
 
+            var where = PathOf(library);
             var absent = functions.FirstOrDefault(f => !NativeLibrary.TryGetExport(handle, f, out _));
             if (absent is not null)
             {
-                var where = PathOf(library);
                 var version = where is null ? null : FileVersionInfo.GetVersionInfo(where).FileVersion;
                 return $"{library}{(where is null ? string.Empty : " in " + Path.GetDirectoryName(where))}{(string.IsNullOrWhiteSpace(version) ? string.Empty : $" (version {version.Trim()})")} is too old: it has no {absent}. {Fix(library)}";
             }
+
+            // What the NVIDIA and runtime libraries need in turn; Windows' own are left alone.
+            if (depth < 3 && where is not null && seen.Add(where)
+                && !where.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase)
+                && MissingPiece(where, library, seen, depth + 1) is { } deeper)
+            {
+                return deeper;
+            }
         }
 
-        return $"{file} could not be loaded, and no missing library was found. Install the latest Microsoft Visual C++ Redistributable (x64) and the NVIDIA driver, then try again.";
+        return null;
     }
 
     private static string Fix(string library) =>

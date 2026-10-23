@@ -39,7 +39,7 @@ public static partial class LocalVoiceGpu
     public const string CheckFile = "gpu-check.txt";
 
     // Raise when the check changes: a result from an older check is then not trusted.
-    private const string CheckVersion = "check 2";
+    private const string CheckVersion = "check 3";
 
     private const string NativeLibraryName = "sherpa-onnx-c-api";
 
